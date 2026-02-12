@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Painel Chat WhatsApp</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 h-screen">
+  <div class="h-screen max-w-6xl mx-auto p-4">
+    <div class="h-full grid grid-cols-12 gap-4">
+
+      <aside class="col-span-4 bg-white rounded-2xl shadow flex flex-col overflow-hidden">
+        <div class="p-4 border-b flex items-center gap-2">
+          <div class="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center font-bold">WA</div>
+          <div class="flex-1">
+            <div class="font-semibold">Conversas</div>
+            <div class="text-xs text-slate-500">estilo WhatsApp • Cloud API</div>
+          </div>
+        </div>
+
+        <div class="p-4 border-b">
+          <div class="flex gap-2">
+            <input id="newNumber" class="flex-1 border rounded-xl p-2" placeholder="Número (55DDD...)" />
+            <button id="btnNew" class="bg-emerald-500 text-white px-4 rounded-xl">+ Nova</button>
+          </div>
+          <div class="text-xs text-slate-500 mt-2">Não precisa salvar contato. Cria a conversa no painel.</div>
+        </div>
+
+        <div class="p-2 overflow-auto" id="convoList"></div>
+      </aside>
+
+      <main class="col-span-8 bg-white rounded-2xl shadow flex flex-col overflow-hidden">
+        <div class="p-4 border-b">
+          <div class="font-semibold" id="chatTitle">Selecione uma conversa</div>
+          <div class="text-xs text-slate-500" id="chatSubtitle">—</div>
+        </div>
+
+        <div class="flex-1 overflow-auto p-4 bg-slate-50" id="messages"></div>
+
+        <div class="p-3 border-t bg-white">
+          <div class="flex gap-2 items-center">
+            <input id="msg" class="flex-1 border rounded-2xl p-3" placeholder="Digite uma mensagem..." />
+            <button id="btnSend" class="bg-emerald-500 text-white px-5 py-3 rounded-2xl">Enviar</button>
+          </div>
+          <div class="text-xs text-slate-500 mt-2">
+            O sistema tenta <b>texto livre</b>. Se a janela 24h estiver fechada, ele envia o <b>template</b> automaticamente.
+          </div>
+        </div>
+      </main>
+
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
