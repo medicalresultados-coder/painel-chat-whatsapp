@@ -12,7 +12,7 @@ const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'verify_token';
 
 const ADMIN_USER = process.env.ADMIN_USER || 'admin';
-const ADMIN_PASS = process.env.ADMIN_PASS || 'senha_forte';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'med16160';
 
 // ===== Middleware =====
 app.use(express.json({ limit: '2mb' }));
@@ -20,7 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Proteção por senha (Basic Auth) - libera /webhook
 app.use((req, res, next) => {
-  // if (req.path.startsWith('/webhook')) return next();
+   if (req.path.startsWith('/webhook')) return next();
 
   const auth = req.headers.authorization || '';
   const [type, token] = auth.split(' ');
