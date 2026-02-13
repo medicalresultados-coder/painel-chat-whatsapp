@@ -20,6 +20,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Proteção por senha (Basic Auth) - libera /webhook
 app.use((req, res, next) => {
+  // ✅ Libera webhook SEM autenticação
   if (req.path.startsWith('/webhook')) return next();
 
   const auth = req.headers.authorization || '';
