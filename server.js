@@ -118,15 +118,22 @@ app.post('/api/send', async (req, res) => {
   };
 
   // Template fixo (sem variáveis) - seu template aprovado
-  const payloadTemplate = {
-    messaging_product: 'whatsapp',
-    to: phone,
-    type: 'template',
-    template: {
-      name: 'appointment_cancellation_1',
-      language: { code: 'pt_BR' }
-    }
-  };
+ const payloadTemplate = {
+  messaging_product: 'whatsapp',
+  to: phone,
+  type: 'template',
+  template: {
+    name: 'appointment_cancellation_1',
+    language: { code: 'pt_BR' },
+    components: [{
+      type: 'body',
+      parameters: [
+        { type: 'text', text } // {{1}} recebe o que você digitou no chat
+      ]
+    }]
+  }
+};
+
 
   async function callWhatsApp(payload) {
     return axios.post(
