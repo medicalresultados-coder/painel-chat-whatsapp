@@ -7,11 +7,11 @@ const path = require('path');
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const TOKEN = process.env.WHATSAPP_TKN;
+const TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'verify_token';
 
-const ADMIN_USER = process.env.ADMIN_USER || 'admin';
+const ADMIN_USER = process.env.ADMIN_USER || 'med16160';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'med16160';
 
 // ===== Middleware =====
