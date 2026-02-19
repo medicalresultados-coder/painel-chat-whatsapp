@@ -20,7 +20,7 @@ function initials(nameOrNumber) {
 
 function fmtTime(ts) {
   const d = new Date(ts);
-  return d.toLocaleString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDay(ts) {
@@ -34,56 +34,46 @@ async function fetchJSON(url, opts) {
   return data;
 }
 
+function renderTicks(status) {
+  if (!status) return '';
+
+  if (status === 'sent')
+    return '<span class="text-[11px] text-[#667781]">✓</span>';
+
+  if (status === 'delivered')
+    return '<span class="text-[11px] text-[#667781]">✓✓</span>';
+
+  if (status === 'read')
+    return '<span class="text-[11px] text-sky-600">✓✓</span>';
+
+  if (status === 'failed')
+    return '<span class="text-[11px] text-red-600 font-bold">!</span>';
+
+  return '';
+}
+
 function convoHTML(c) {
   const lastText = c.last?.text || '—';
   const time = c.lastMessageAt ? fmtTime(c.lastMessageAt) : '';
   const isActive = selected === c.waId;
 
   return `
-    <button data-id="${c.waId}" class="w-full text-left px-3 py-3 border-b hover:bg-[#f5f6f6] ${isActive ? 'bg-[#f0f2f5]' : 'bg-white'}">
+    <button data-id="${c.waId}" 
+      class="w-full text-left px-3 py-3 border-b hover:bg-[#f5f6f6] ${isActive ? 'bg-[#f0f2f5]' : 'bg-white'}">
       <div class="flex items-center gap-3">
         <div class="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
           ${escapeHtml(initials(c.name || c.waId))}
         </div>
         <div class="min-w-0 flex-1">
-          <div class="flex items-center justify-between gap-3">
+          <div class="flex items-center justify-between">
             <div class="font-semibold text-[#111b21] truncate">${escapeHtml(c.name || c.waId)}</div>
-            <div class="text-xs text-[#667781] shrink-0">${time}</div>
+            <div class="text-xs text-[#667781]">${time}</div>
           </div>
-          <div class="text-sm text-[#667781] truncate mt-0.5">${escapeHtml(lastText)}</div>
+          <div class="text-sm text-[#667781] truncate">${escapeHtml(lastText)}</div>
         </div>
       </div>
     </button>
   `;
-}
-
-function renderTicks(status) {
-  if (!status) return '';
-  if (status === 'sent') return '<span class="text-[11px] text-[#667781]">✓</span>';
-  if (status === 'delivered') return '<span class="text-[11px] text-[#667781]">✓✓</span>';
-  if (status === 'read') return '<span class="text-[11px] text-sky-600">✓✓</span>';
-  if (status === 'failed') return '<span class="text-[11px] text-red-600">!</span>';
-  return '';
-}
-
-async function loadConversations() {
-  const list = await fetchJSON('/api/conversations');
-  const filtered = list.filter(c => {
-    if (!searchTerm) return true;
-    const hay = `${c.name||''} ${c.waId||''} ${(c.last?.text||'')}`.toLowerCase();
-    return hay.includes(searchTerm);
-  });
-
-  const root = document.getElementById('convoList');
-  root.innerHTML = filtered.map(convoHTML).join('');
-
-  root.querySelectorAll('button[data-id]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      const convo = filtered.find(x => x.waId === id);
-      await selectConversation(id, convo?.name || id);
-    });
-  });
 }
 
 function sig(messages) {
@@ -95,6 +85,7 @@ function renderMessages(messages) {
   root.innerHTML = '';
 
   let lastDay = '';
+
   for (const m of messages) {
     const out = m.direction === 'out';
     const bubble = out ? 'bg-[#d9fdd3]' : 'bg-white';
@@ -118,7 +109,9 @@ function renderMessages(messages) {
     root.insertAdjacentHTML('beforeend', `
       <div class="flex ${align} mb-2">
         <div class="max-w-[72%] ${bubble} rounded-2xl px-4 py-2 shadow-sm">
-          <div class="whitespace-pre-wrap text-[#111b21] text-sm">${escapeHtml(m.text)}</div>
+          <div class="whitespace-pre-wrap text-[#111b21] text-sm">
+            ${escapeHtml(m.text)}
+          </div>
           <div class="mt-1 flex items-center justify-end gap-2">
             <span class="text-[11px] text-[#667781]">${time}</span>
             ${ticks}
@@ -130,6 +123,26 @@ function renderMessages(messages) {
 
   const wrap = document.getElementById('messagesWrap');
   wrap.scrollTop = wrap.scrollHeight;
+}
+
+async function loadConversations() {
+  const list = await fetchJSON('/api/conversations');
+  const filtered = list.filter(c => {
+    if (!searchTerm) return true;
+    const hay = `${c.name||''} ${c.waId||''} ${(c.last?.text||'')}`.toLowerCase();
+    return hay.includes(searchTerm);
+  });
+
+  const root = document.getElementById('convoList');
+  root.innerHTML = filtered.map(convoHTML).join('');
+
+  root.querySelectorAll('button[data-id]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-id');
+      const convo = filtered.find(x => x.waId === id);
+      await selectConversation(id, convo?.name || id);
+    });
+  });
 }
 
 async function loadMessages() {
@@ -162,6 +175,7 @@ async function sendMessage() {
   if (!text) return;
 
   input.value = '';
+
   try {
     await fetchJSON('/api/send', {
       method: 'POST',
@@ -177,38 +191,15 @@ async function sendMessage() {
   }
 }
 
-async function createConversation() {
-  const n = document.getElementById('newNumber');
-  const waId = n.value.trim();
-  if (!waId) return;
-
-  try {
-    const resp = await fetchJSON('/api/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ waId, name: '' })
-    });
-    n.value = '';
-    await loadConversations();
-    await selectConversation(resp.waId, resp.waId);
-  } catch (e) {
-    alert('Falha ao criar conversa: ' + (e.message || e));
-  }
-}
-
 document.getElementById('btnSend').addEventListener('click', sendMessage);
+
 document.getElementById('msg').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
-document.getElementById('btnNew').addEventListener('click', createConversation);
-document.getElementById('btnRefresh').addEventListener('click', async () => {
-  lastSig = '';
-  await loadConversations();
-  if (selected) await loadMessages();
-});
+
 document.getElementById('search').addEventListener('input', (e) => {
   searchTerm = (e.target.value || '').toLowerCase();
   loadConversations();
