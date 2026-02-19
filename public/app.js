@@ -28,10 +28,15 @@ function fmtDay(ts) {
   return new Date(ts).toLocaleDateString('pt-BR', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' });
 }
 
-async function fetchJSON(url, opts) {
-  const res = await fetch(url, opts);
+async function fetchJSON(url, opts = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    credentials: 'same-origin'  // <-- ADICIONE ISSO
+  });
+
   let data = null;
-  try { data = await res.json(); } catch { data = null; }
+  try { data = await res.json(); } catch {}
+
   if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
   return data;
 }
