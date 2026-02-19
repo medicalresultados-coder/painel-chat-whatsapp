@@ -85,15 +85,20 @@ async function sendMessage() {
 
   input.value = '';
 
-  await fetchJSON('/api/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ waId: selected, text })
-  });
+  try {
+    await fetchJSON('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waId: selected, text })
+    });
 
-  await loadMessages();
-  await loadConversations();
+    await loadMessages();
+    await loadConversations();
+  } catch (e) {
+    alert('Falha ao enviar: ' + (e.message || e));
+  }
 }
+
 
 async function createConversation() {
   const n = document.getElementById('newNumber');
