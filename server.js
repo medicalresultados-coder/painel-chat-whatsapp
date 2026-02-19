@@ -214,6 +214,26 @@ app.post('/webhook', (req, res) => {
 
   res.sendStatus(200);
 });
+app.get('/api/diag', async (req, res) => {
+  try {
+    const phoneId = process.env.PHONE_NUMBER_ID;
+    const token = process.env.WHATSAPP_TOKEN;
+
+    const r = await axios.get(`https://graph.facebook.com/v18.0/${phoneId}`, {
+      params: { access_token: token }
+    });
+
+    res.json({
+      ok: true,
+      phoneId,
+      verified_name: r.data.verified_name,
+      display_phone_number: r.data.display_phone_number,
+      tokenPrefix: (token || '').slice(0, 8)
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, details: e.response?.data || e.message });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
