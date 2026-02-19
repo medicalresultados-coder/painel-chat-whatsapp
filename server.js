@@ -1,8 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const fs = require('fs');
 const path = require('path');
+const { Pool } = require('pg');
 
 const app = express();
 
@@ -14,13 +14,43 @@ const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'verify_token';
 const ADMIN_USER = process.env.ADMIN_USER || 'med16160';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'med16160';
 
+// ===== POSTGRES =====
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+async function dbQuery(text, params) {
+  return pool.query(text, params);
+}
+
+async function initDB() {
+  await dbQuery(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      wa_id TEXT PRIMARY KEY,
+      name TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+
+  await dbQuery(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id BIGSERIAL PRIMARY KEY,
+      wa_id TEXT REFERENCES conversations(wa_id) ON DELETE CASCADE,
+      direction TEXT CHECK (direction IN ('in','out')),
+      text TEXT,
+      at TIMESTAMPTZ DEFAULT NOW()
+    );
+  `);
+}
+
 // ===== Middleware =====
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Proteção por senha (Basic Auth) - libera /webhook
 app.use((req, res, next) => {
-   if (req.path.startsWith('/webhook')) return next();
+  if (req.path.startsWith('/webhook')) return next();
 
   const auth = req.headers.authorization || '';
   const [type, token] = auth.split(' ');
@@ -32,35 +62,12 @@ app.use((req, res, next) => {
   const [user, pass] = Buffer.from(token, 'base64').toString().split(':');
   if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
 
-  res.setHeader('WWW-Authenticate', 'Basic realm="Painel WhatsApp"');
   return res.status(401).send('Invalid credentials');
 });
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ===== DB simples em arquivo (para testes locais). Para produção, recomendo Postgres depois. =====
-const DB_PATH = path.join(__dirname, 'data.json');
-
-function loadDB() {
-  try { return JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')); }
-  catch { return { conversations: {} }; }
-}
-function saveDB(db) { fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2)); }
-
-function upsertConversation(db, waId, name = '') {
-  if (!db.conversations[waId]) {
-    db.conversations[waId] = { waId, name: name || waId, lastMessageAt: Date.now(), messages: [] };
-  } else if (name && db.conversations[waId].name === db.conversations[waId].waId) {
-    db.conversations[waId].name = name;
-  }
-  return db.conversations[waId];
-}
-function pushMessage(db, waId, msg) {
-  const convo = upsertConversation(db, waId);
-  convo.messages.push(msg);
-  convo.lastMessageAt = Date.now();
-}
-
+// ===== Helpers =====
 function normalizePhoneBR(input) {
   const digits = String(input || '').replace(/\D/g, '');
   if (!digits) return '';
@@ -68,174 +75,128 @@ function normalizePhoneBR(input) {
   return '55' + digits;
 }
 
-// ===== Painel API =====
-app.get('/api/conversations', (req, res) => {
-  const db = loadDB();
-  const list = Object.values(db.conversations)
-    .map(c => ({
-      waId: c.waId,
-      name: c.name,
-      lastMessageAt: c.lastMessageAt,
-      last: c.messages[c.messages.length - 1] || null
-    }))
-    .sort((a, b) => (b.lastMessageAt || 0) - (a.lastMessageAt || 0));
-  res.json(list);
+async function upsertConversation(waId, name = '') {
+  await dbQuery(`
+    INSERT INTO conversations (wa_id, name)
+    VALUES ($1, $2)
+    ON CONFLICT (wa_id)
+    DO UPDATE SET
+      name = COALESCE(NULLIF($2,''), conversations.name),
+      updated_at = NOW()
+  `, [waId, name]);
+}
+
+async function pushMessage(waId, direction, text) {
+  await upsertConversation(waId);
+  await dbQuery(`
+    INSERT INTO messages (wa_id, direction, text)
+    VALUES ($1, $2, $3)
+  `, [waId, direction, text]);
+}
+
+// ===== API =====
+app.get('/api/conversations', async (req, res) => {
+  const { rows } = await dbQuery(`
+    SELECT c.wa_id AS "waId",
+           c.name,
+           EXTRACT(EPOCH FROM c.updated_at)*1000 AS "lastMessageAt",
+           (
+             SELECT json_build_object(
+               'direction', m.direction,
+               'text', m.text,
+               'at', EXTRACT(EPOCH FROM m.at)*1000
+             )
+             FROM messages m
+             WHERE m.wa_id = c.wa_id
+             ORDER BY m.at DESC
+             LIMIT 1
+           ) AS "last"
+    FROM conversations c
+    ORDER BY c.updated_at DESC
+  `);
+  res.json(rows);
 });
 
-app.get('/api/messages/:waId', (req, res) => {
-  const db = loadDB();
-  const convo = db.conversations[req.params.waId];
-  res.json(convo ? convo.messages : []);
+app.get('/api/messages/:waId', async (req, res) => {
+  const { rows } = await dbQuery(`
+    SELECT direction, text, EXTRACT(EPOCH FROM at)*1000 AS at
+    FROM messages
+    WHERE wa_id = $1
+    ORDER BY at ASC
+  `, [req.params.waId]);
+  res.json(rows);
 });
 
-app.post('/api/conversations', (req, res) => {
-  const { waId, name } = req.body;
-  const phone = normalizePhoneBR(waId);
+app.post('/api/conversations', async (req, res) => {
+  const phone = normalizePhoneBR(req.body.waId);
   if (!phone) return res.status(400).json({ error: 'Número inválido' });
 
-  const db = loadDB();
-  upsertConversation(db, phone, name || phone);
-  saveDB(db);
+  await upsertConversation(phone, '');
   res.json({ ok: true, waId: phone });
 });
 
-// ===== Envio inteligente (melhor forma): tenta TEXTO; se falhar por janela 24h, manda TEMPLATE =====
 app.post('/api/send', async (req, res) => {
   const { waId, text } = req.body;
   const phone = normalizePhoneBR(waId);
 
-  if (!phone || !text) return res.status(400).json({ error: 'waId e text são obrigatórios' });
-  if (!TOKEN || !PHONE_ID) return res.status(500).json({ error: 'Token/Phone ID não configurados no .env' });
-
-  const db = loadDB();
-  upsertConversation(db, phone);
-
-  const payloadText = {
-    messaging_product: 'whatsapp',
-    to: phone,
-    type: 'text',
-    text: { body: text }
-  };
-
-  // Template fixo (sem variáveis) - seu template aprovado
- const payloadTemplate = {
-  messaging_product: 'whatsapp',
-  to: phone,
-  type: 'template',
-  template: {
-    name: 'appointment_cancellation_1',
-    language: { code: 'pt_BR' },
-    components: [{
-      type: 'body',
-      parameters: [
-        { type: 'text', text } // {{1}} recebe o que você digitou no chat
-      ]
-    }]
-  }
-};
-
-
-  async function callWhatsApp(payload) {
-    return axios.post(
-      `https://graph.facebook.com/v18.0/${PHONE_ID}/messages`,
-      payload,
-      { headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } }
-    );
-  }
+  if (!phone || !text)
+    return res.status(400).json({ error: 'waId e text obrigatórios' });
 
   try {
-    try {
-      // tenta texto livre primeiro
-      await callWhatsApp(payloadText);
-    } catch (err) {
-      // fallback: se janela fechada, manda template
-      const code = err.response?.data?.error?.code;
-      const msg = (err.response?.data?.error?.message || '').toLowerCase();
-      const isWindowError =
-        code === 131047 ||
-        msg.includes('24 hour') ||
-        msg.includes('outside the allowed window') ||
-        msg.includes('re-engagement');
+    await axios.post(
+      `https://graph.facebook.com/v18.0/${PHONE_ID}/messages`,
+      {
+        messaging_product: 'whatsapp',
+        to: phone,
+        type: 'text',
+        text: { body: text }
+      },
+      { headers: { Authorization: `Bearer ${TOKEN}` } }
+    );
 
-      if (!isWindowError) throw err;
-
-      await callWhatsApp(payloadTemplate);
-    }
-
-    pushMessage(db, phone, { id: 'out_' + Date.now(), direction: 'out', text, at: Date.now() });
-    saveDB(db);
+    await pushMessage(phone, 'out', text);
 
     res.json({ ok: true });
   } catch (err) {
-    const details = err.response?.data || err.message;
-    res.status(500).json({ error: 'Falha ao enviar', details });
+    res.status(500).json({
+      error: 'Falha ao enviar',
+      details: err.response?.data || err.message
+    });
   }
 });
 
-// ===== Webhook (receber mensagens) =====
+// ===== Webhook =====
 app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-  return res.sendStatus(403);
+  if (
+    req.query['hub.mode'] === 'subscribe' &&
+    req.query['hub.verify_token'] === VERIFY_TOKEN
+  ) {
+    return res.send(req.query['hub.challenge']);
+  }
+  res.sendStatus(403);
 });
 
-app.post('/webhook', (req, res) => {
-  const body = req.body;
-
+app.post('/webhook', async (req, res) => {
   try {
-    const entry = body.entry?.[0];
-    const changes = entry?.changes?.[0];
-    const value = changes?.value;
+    const msg = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    const contact = req.body?.entry?.[0]?.changes?.[0]?.value?.contacts?.[0];
 
-    const messages = value?.messages;
-    const contacts = value?.contacts;
-
-    if (messages && messages.length) {
-      const msg = messages[0];
+    if (msg) {
       const from = msg.from;
-      const name = contacts?.[0]?.profile?.name || from;
+      const name = contact?.profile?.name || from;
+      const text = msg.text?.body || '[não-texto]';
 
-      let text = '[mensagem não-texto]';
-      if (msg.type === 'text') text = msg.text?.body || '';
-      if (msg.type === 'button') text = msg.button?.text || '[botão]';
-      if (msg.type === 'interactive') text = '[interativo]';
-
-      const db = loadDB();
-      upsertConversation(db, from, name);
-      pushMessage(db, from, { id: msg.id || ('in_' + Date.now()), direction: 'in', text, at: Date.now() });
-      saveDB(db);
+      await upsertConversation(from, name);
+      await pushMessage(from, 'in', text);
     }
-  } catch {
-    // não quebra webhook
-  }
+  } catch {}
 
   res.sendStatus(200);
 });
-app.get('/api/diag', async (req, res) => {
-  try {
-    const phoneId = process.env.PHONE_NUMBER_ID;
-    const token = process.env.WHATSAPP_TOKEN;
 
-    const r = await axios.get(`https://graph.facebook.com/v18.0/${phoneId}`, {
-      params: { access_token: token }
-    });
-
-    res.json({
-      ok: true,
-      phoneId,
-      verified_name: r.data.verified_name,
-      display_phone_number: r.data.display_phone_number,
-      tokenPrefix: (token || '').slice(0, 8)
-    });
-  } catch (e) {
-    res.status(500).json({ ok: false, details: e.response?.data || e.message });
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-  console.log(`Painel: http://localhost:${PORT}`);
+// ===== START =====
+initDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+  });
 });
