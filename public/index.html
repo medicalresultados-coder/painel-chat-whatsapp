@@ -3,107 +3,105 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Painel WhatsApp - Clinilab</title>
+  <title>Clinilab WhatsApp</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 
-<body class="h-screen overflow-hidden bg-[#d9dbd5]">
-  <div class="h-screen w-screen flex">
-    <!-- LEFT SIDEBAR (Lista) -->
-    <aside class="w-[420px] min-w-[360px] max-w-[460px] h-full bg-white border-r flex flex-col">
-      <!-- Header -->
-      <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5] border-b">
-        <div class="flex items-center gap-3">
-          <div class="h-9 w-9 rounded-full bg-emerald-100 flex items-center justify-center font-bold text-emerald-700">
-            C
-          </div>
-          <div class="leading-tight">
-            <div class="font-semibold text-slate-800">Clinilab</div>
-            <div class="text-xs text-slate-500">Atendimento</div>
-          </div>
-        </div>
+<body class="h-screen overflow-hidden bg-[#0b141a]">
+  <!-- “moldura” estilo WhatsApp Desktop -->
+  <div class="h-screen w-screen flex items-center justify-center">
+    <div class="w-[95vw] h-[95vh] max-w-[1500px] max-h-[900px] rounded-lg overflow-hidden shadow-2xl bg-white flex">
 
-        <div class="flex items-center gap-2">
+      <!-- Sidebar -->
+      <aside class="w-[420px] border-r flex flex-col">
+        <!-- Header -->
+        <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5]">
+          <div class="flex items-center gap-3">
+            <div class="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center font-bold text-emerald-700">
+              C
+            </div>
+            <div class="leading-tight">
+              <div class="font-semibold text-[#111b21]">Clinilab</div>
+              <div class="text-xs text-[#667781]">Atendimento</div>
+            </div>
+          </div>
           <button id="btnRefresh" class="h-9 px-3 rounded-lg hover:bg-slate-200 text-sm">Atualizar</button>
         </div>
-      </div>
 
-      <!-- Search + New chat -->
-      <div class="p-3 bg-white border-b">
-        <div class="flex gap-2">
-          <input id="search"
-                 class="w-full bg-[#f0f2f5] rounded-xl px-4 py-2 outline-none"
-                 placeholder="Pesquisar conversa" />
-        </div>
-
-        <div class="mt-3 flex gap-2">
-          <input id="newNumber"
-                 class="flex-1 bg-[#f0f2f5] rounded-xl px-4 py-2 outline-none"
-                 placeholder="Iniciar com número (55DDD...)" />
-          <button id="btnNew"
-                  class="px-4 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600">
-            Nova
-          </button>
-        </div>
-
-        <div class="text-[11px] text-slate-500 mt-2">
-          Não precisa salvar contato.
-        </div>
-      </div>
-
-      <!-- Conversation list -->
-      <div id="convoList" class="flex-1 overflow-auto"></div>
-    </aside>
-
-    <!-- CHAT AREA -->
-    <main class="flex-1 h-full flex flex-col">
-      <!-- Top bar -->
-      <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5] border-b">
-        <div class="flex items-center gap-3">
-          <div id="avatar" class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
-            —
+        <!-- Search -->
+        <div class="p-3 bg-white border-b">
+          <div class="bg-[#f0f2f5] rounded-xl px-3 py-2 flex items-center gap-2">
+            <span class="text-[#667781]">🔎</span>
+            <input id="search" class="w-full bg-transparent outline-none text-sm"
+                   placeholder="Pesquisar ou começar nova conversa" />
           </div>
-          <div class="leading-tight">
-            <div id="chatTitle" class="font-semibold text-slate-800">Selecione uma conversa</div>
-            <div id="chatSubtitle" class="text-xs text-slate-500">—</div>
+
+          <div class="mt-3 flex gap-2">
+            <input id="newNumber" class="flex-1 bg-[#f0f2f5] rounded-xl px-4 py-2 outline-none text-sm"
+                   placeholder="Número (55DDD...)" />
+            <button id="btnNew" class="px-4 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600 text-sm">
+              Nova
+            </button>
+          </div>
+
+          <div class="text-[11px] text-[#667781] mt-2">
+            Não precisa salvar contato.
           </div>
         </div>
 
-        <div class="text-xs text-slate-500 flex items-center gap-2">
-          <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
-          online
-        </div>
-      </div>
+        <!-- List -->
+        <div id="convoList" class="flex-1 overflow-auto bg-white"></div>
+      </aside>
 
-      <!-- Messages (WhatsApp-like background) -->
-      <div id="messagesWrap" class="flex-1 overflow-auto bg-[#efeae2]">
-        <div id="messages" class="min-h-full p-6"></div>
-      </div>
-
-      <!-- Composer -->
-      <div class="p-3 bg-[#f0f2f5] border-t">
-        <div class="flex items-center gap-2">
-          <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Emoji">😊</button>
-          <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Anexo">📎</button>
-
-          <input id="msg"
-                 class="flex-1 bg-white rounded-2xl px-4 py-3 outline-none"
-                 placeholder="Digite uma mensagem" />
-
-          <button id="btnSend"
-                  class="h-10 px-5 rounded-2xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:hover:bg-emerald-500"
-                  disabled>
-            Enviar
-          </button>
+      <!-- Chat -->
+      <main class="flex-1 flex flex-col">
+        <!-- Topbar -->
+        <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5] border-b">
+          <div class="flex items-center gap-3 min-w-0">
+            <div id="avatar" class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
+              —
+            </div>
+            <div class="min-w-0">
+              <div id="chatTitle" class="font-semibold text-[#111b21] truncate">Selecione uma conversa</div>
+              <div id="chatSubtitle" class="text-xs text-[#667781] truncate">—</div>
+            </div>
+          </div>
+          <div class="text-xs text-[#667781] flex items-center gap-2">
+            <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span> online
+          </div>
         </div>
 
-        <div class="text-[11px] text-slate-500 mt-2">
-          Dica: Enter envia • Shift+Enter quebra linha
+        <!-- Messages -->
+        <div id="messagesWrap" class="flex-1 overflow-auto bg-[#efeae2]">
+          <div id="messages" class="p-6"></div>
         </div>
-      </div>
-    </main>
+
+        <!-- Composer -->
+        <div class="p-3 bg-[#f0f2f5] border-t">
+          <div class="flex items-center gap-2">
+            <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Emoji">😊</button>
+            <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Anexo">📎</button>
+
+            <input id="msg"
+                   class="flex-1 bg-white rounded-2xl px-4 py-3 outline-none text-sm"
+                   placeholder="Digite uma mensagem" />
+
+            <button id="btnSend"
+                    class="h-10 px-5 rounded-2xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50"
+                    disabled>
+              Enviar
+            </button>
+          </div>
+
+          <div class="text-[11px] text-[#667781] mt-2">
+            Enter envia • Shift+Enter quebra linha
+          </div>
+        </div>
+      </main>
+    </div>
   </div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260219-2"></script>
 </body>
 </html>
+
