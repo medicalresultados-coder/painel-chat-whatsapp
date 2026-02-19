@@ -7,7 +7,7 @@ const path = require('path');
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const TOKEN = process.env.WHATSAPP_TOKEN;
+const TOKEN = process.env.WHATSAPP_TKN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'verify_token';
 
