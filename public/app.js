@@ -29,14 +29,9 @@ function fmtDay(ts) {
 }
 
 async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, {
-    ...opts,
-    credentials: 'same-origin'  // <-- ADICIONE ISSO
-  });
-
+  const res = await fetch(url, { ...opts, credentials: 'same-origin' });
   let data = null;
   try { data = await res.json(); } catch {}
-
   if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
   return data;
 }
@@ -124,8 +119,10 @@ function renderMessages(messages) {
 
 async function loadConversations() {
   const list = await fetchJSON('/api/conversations');
-
-  const filtered = list.filter(c => {
+  const arr = Array.isArray(list) ? list : [];
+  const filtered = arr.filter(c => { /* ... */ });
+  ...
+}
     if (!searchTerm) return true;
     const hay = `${c.name||''} ${c.waId||''} ${(c.last?.text||'')}`.toLowerCase();
     return hay.includes(searchTerm);

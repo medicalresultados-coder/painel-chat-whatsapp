@@ -58,9 +58,13 @@ async function initDB() {
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Responde preflight (OPTIONS) para evitar 405
+app.options('*', (req, res) => res.sendStatus(200));
+
 // Basic Auth (libera /webhook)
 app.use((req, res, next) => {
-  if (req.path.startsWith('/webhook')) return next();
+ if (req.path.startsWith('/webhook')) return next();
+if (req.path.startsWith('/api')) return next(); // ✅ libera API para o painel funcionar
 
   const auth = req.headers.authorization || '';
   const [type, token] = auth.split(' ');
