@@ -190,10 +190,13 @@ app.post('/webhook', async (req, res) => {
       await upsertConversation(from, name);
       await pushMessage(from, 'in', text);
     }
-  } catch {}
+  } catch (e) {
+    console.error('Webhook error:', e);
+  }
 
   res.sendStatus(200);
 });
+
 
 // ===== START =====
 app.listen(PORT, () => {
@@ -206,5 +209,5 @@ initDB()
 
 process.on('unhandledRejection', (e) => console.error('UNHANDLED REJECTION:', e));
 process.on('uncaughtException', (e) => console.error('UNCAUGHT EXCEPTION:', e));
-});
+
 
