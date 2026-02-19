@@ -2,54 +2,106 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Painel Chat WhatsApp</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Painel WhatsApp - Clinilab</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-100 h-screen">
-  <div class="h-screen max-w-6xl mx-auto p-4">
-    <div class="h-full grid grid-cols-12 gap-4">
 
-      <aside class="col-span-4 bg-white rounded-2xl shadow flex flex-col overflow-hidden">
-        <div class="p-4 border-b flex items-center gap-2">
-          <div class="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center font-bold">WA</div>
-          <div class="flex-1">
-            <div class="font-semibold">Conversas</div>
-            <div class="text-xs text-slate-500">estilo WhatsApp • Cloud API</div>
+<body class="h-screen overflow-hidden bg-[#d9dbd5]">
+  <div class="h-screen w-screen flex">
+    <!-- LEFT SIDEBAR (Lista) -->
+    <aside class="w-[420px] min-w-[360px] max-w-[460px] h-full bg-white border-r flex flex-col">
+      <!-- Header -->
+      <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5] border-b">
+        <div class="flex items-center gap-3">
+          <div class="h-9 w-9 rounded-full bg-emerald-100 flex items-center justify-center font-bold text-emerald-700">
+            C
+          </div>
+          <div class="leading-tight">
+            <div class="font-semibold text-slate-800">Clinilab</div>
+            <div class="text-xs text-slate-500">Atendimento</div>
           </div>
         </div>
 
-        <div class="p-4 border-b">
-          <div class="flex gap-2">
-            <input id="newNumber" class="flex-1 border rounded-xl p-2" placeholder="Número (55DDD...)" />
-            <button id="btnNew" class="bg-emerald-500 text-white px-4 rounded-xl">+ Nova</button>
-          </div>
-          <div class="text-xs text-slate-500 mt-2">Não precisa salvar contato. Cria a conversa no painel.</div>
+        <div class="flex items-center gap-2">
+          <button id="btnRefresh" class="h-9 px-3 rounded-lg hover:bg-slate-200 text-sm">Atualizar</button>
+        </div>
+      </div>
+
+      <!-- Search + New chat -->
+      <div class="p-3 bg-white border-b">
+        <div class="flex gap-2">
+          <input id="search"
+                 class="w-full bg-[#f0f2f5] rounded-xl px-4 py-2 outline-none"
+                 placeholder="Pesquisar conversa" />
         </div>
 
-        <div class="p-2 overflow-auto" id="convoList"></div>
-      </aside>
-
-      <main class="col-span-8 bg-white rounded-2xl shadow flex flex-col overflow-hidden">
-        <div class="p-4 border-b">
-          <div class="font-semibold" id="chatTitle">Selecione uma conversa</div>
-          <div class="text-xs text-slate-500" id="chatSubtitle">—</div>
+        <div class="mt-3 flex gap-2">
+          <input id="newNumber"
+                 class="flex-1 bg-[#f0f2f5] rounded-xl px-4 py-2 outline-none"
+                 placeholder="Iniciar com número (55DDD...)" />
+          <button id="btnNew"
+                  class="px-4 rounded-xl bg-emerald-500 text-white hover:bg-emerald-600">
+            Nova
+          </button>
         </div>
 
-        <div class="flex-1 overflow-auto p-4 bg-slate-50" id="messages"></div>
+        <div class="text-[11px] text-slate-500 mt-2">
+          Não precisa salvar contato.
+        </div>
+      </div>
 
-        <div class="p-3 border-t bg-white">
-          <div class="flex gap-2 items-center">
-            <input id="msg" class="flex-1 border rounded-2xl p-3" placeholder="Digite uma mensagem..." />
-            <button id="btnSend" class="bg-emerald-500 text-white px-5 py-3 rounded-2xl">Enviar</button>
+      <!-- Conversation list -->
+      <div id="convoList" class="flex-1 overflow-auto"></div>
+    </aside>
+
+    <!-- CHAT AREA -->
+    <main class="flex-1 h-full flex flex-col">
+      <!-- Top bar -->
+      <div class="h-14 px-4 flex items-center justify-between bg-[#f0f2f5] border-b">
+        <div class="flex items-center gap-3">
+          <div id="avatar" class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
+            —
           </div>
-          <div class="text-xs text-slate-500 mt-2">
-            O sistema tenta <b>texto livre</b>. Se a janela 24h estiver fechada, ele envia o <b>template</b> automaticamente.
+          <div class="leading-tight">
+            <div id="chatTitle" class="font-semibold text-slate-800">Selecione uma conversa</div>
+            <div id="chatSubtitle" class="text-xs text-slate-500">—</div>
           </div>
         </div>
-      </main>
 
-    </div>
+        <div class="text-xs text-slate-500 flex items-center gap-2">
+          <span class="inline-flex h-2 w-2 rounded-full bg-emerald-500"></span>
+          online
+        </div>
+      </div>
+
+      <!-- Messages (WhatsApp-like background) -->
+      <div id="messagesWrap" class="flex-1 overflow-auto bg-[#efeae2]">
+        <div id="messages" class="min-h-full p-6"></div>
+      </div>
+
+      <!-- Composer -->
+      <div class="p-3 bg-[#f0f2f5] border-t">
+        <div class="flex items-center gap-2">
+          <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Emoji">😊</button>
+          <button class="h-10 w-10 rounded-full hover:bg-slate-200" title="Anexo">📎</button>
+
+          <input id="msg"
+                 class="flex-1 bg-white rounded-2xl px-4 py-3 outline-none"
+                 placeholder="Digite uma mensagem" />
+
+          <button id="btnSend"
+                  class="h-10 px-5 rounded-2xl bg-emerald-500 text-white hover:bg-emerald-600 disabled:opacity-50 disabled:hover:bg-emerald-500"
+                  disabled>
+            Enviar
+          </button>
+        </div>
+
+        <div class="text-[11px] text-slate-500 mt-2">
+          Dica: Enter envia • Shift+Enter quebra linha
+        </div>
+      </div>
+    </main>
   </div>
 
   <script src="/app.js"></script>
