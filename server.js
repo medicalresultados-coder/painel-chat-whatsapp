@@ -7,7 +7,7 @@ const path = require('path');
 const app = express();
 
 const PORT = process.env.PORT || 3000;
-const TOKEN = process.env.WHATSAPP_TKN;
+const TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'verify_token';
 
@@ -38,7 +38,7 @@ app.use((req, res, next) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 
+// ===== DB simples em arquivo (para testes locais). Para produção, recomendo Postgres depois. =====
 const DB_PATH = path.join(__dirname, 'data.json');
 
 function loadDB() {
@@ -99,7 +99,7 @@ app.post('/api/conversations', (req, res) => {
   res.json({ ok: true, waId: phone });
 });
 
-//
+// ===== Envio inteligente (melhor forma): tenta TEXTO; se falhar por janela 24h, manda TEMPLATE =====
 app.post('/api/send', async (req, res) => {
   const { waId, text } = req.body;
   const phone = normalizePhoneBR(waId);
