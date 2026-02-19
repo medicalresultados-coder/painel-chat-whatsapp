@@ -17,7 +17,8 @@ const ADMIN_PASS = process.env.ADMIN_PASS || 'med16160';
 // ===== POSTGRES =====
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 10000
 });
 
 async function dbQuery(text, params) {
@@ -195,8 +196,13 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ===== START =====
-initDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Servidor rodando na porta ${PORT}`);
+});
+
+initDB()
+  .then(() => console.log('DB OK (tabelas prontas)'))
+  .catch((e) => console.error('DB INIT ERROR:', e?.message || e));
+
   });
 });
