@@ -201,8 +201,10 @@ app.listen(PORT, () => {
 });
 
 initDB()
-  .then(() => console.log('DB OK (tabelas prontas)'))
+  .then(() => console.log('DB OK'))
   .catch((e) => console.error('DB INIT ERROR:', e?.message || e));
 
-  });
+process.on('unhandledRejection', (e) => console.error('UNHANDLED REJECTION:', e));
+process.on('uncaughtException', (e) => console.error('UNCAUGHT EXCEPTION:', e));
 });
+
