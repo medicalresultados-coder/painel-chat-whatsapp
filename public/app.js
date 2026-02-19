@@ -29,26 +29,18 @@ function fmtDay(ts) {
 
 async function fetchJSON(url, opts) {
   const res = await fetch(url, opts);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || 'Erro');
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
   return data;
 }
 
 function renderTicks(status) {
   if (!status) return '';
-
-  if (status === 'sent')
-    return '<span class="text-[11px] text-[#667781]">✓</span>';
-
-  if (status === 'delivered')
-    return '<span class="text-[11px] text-[#667781]">✓✓</span>';
-
-  if (status === 'read')
-    return '<span class="text-[11px] text-sky-600">✓✓</span>';
-
-  if (status === 'failed')
-    return '<span class="text-[11px] text-red-600 font-bold">!</span>';
-
+  if (status === 'sent') return '<span class="text-[11px] text-[#667781]">✓</span>';
+  if (status === 'delivered') return '<span class="text-[11px] text-[#667781]">✓✓</span>';
+  if (status === 'read') return '<span class="text-[11px] text-sky-600">✓✓</span>';
+  if (status === 'failed') return '<span class="text-[11px] text-red-600 font-bold">!</span>';
   return '';
 }
 
@@ -58,7 +50,7 @@ function convoHTML(c) {
   const isActive = selected === c.waId;
 
   return `
-    <button data-id="${c.waId}" 
+    <button data-id="${c.waId}"
       class="w-full text-left px-3 py-3 border-b hover:bg-[#f5f6f6] ${isActive ? 'bg-[#f0f2f5]' : 'bg-white'}">
       <div class="flex items-center gap-3">
         <div class="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
@@ -70,6 +62,7 @@ function convoHTML(c) {
             <div class="text-xs text-[#667781]">${time}</div>
           </div>
           <div class="text-sm text-[#667781] truncate">${escapeHtml(lastText)}</div>
+          <div class="text-[11px] text-[#94a3b8] truncate">${escapeHtml(c.waId)}</div>
         </div>
       </div>
     </button>
@@ -109,9 +102,7 @@ function renderMessages(messages) {
     root.insertAdjacentHTML('beforeend', `
       <div class="flex ${align} mb-2">
         <div class="max-w-[72%] ${bubble} rounded-2xl px-4 py-2 shadow-sm">
-          <div class="whitespace-pre-wrap text-[#111b21] text-sm">
-            ${escapeHtml(m.text)}
-          </div>
+          <div class="whitespace-pre-wrap text-[#111b21] text-sm">${escapeHtml(m.text)}</div>
           <div class="mt-1 flex items-center justify-end gap-2">
             <span class="text-[11px] text-[#667781]">${time}</span>
             ${ticks}
@@ -127,6 +118,7 @@ function renderMessages(messages) {
 
 async function loadConversations() {
   const list = await fetchJSON('/api/conversations');
+
   const filtered = list.filter(c => {
     if (!searchTerm) return true;
     const hay = `${c.name||''} ${c.waId||''} ${(c.last?.text||'')}`.toLowerCase();
@@ -158,23 +150,48 @@ async function selectConversation(waId, name) {
   selected = waId;
   selectedName = name || waId;
 
-  document.getElementById('chatTitle').innerText = selectedName;
-  document.getElementById('chatSubtitle').innerText = waId;
-  document.getElementById('avatar').innerText = initials(selectedName);
-  document.getElementById('btnSend').disabled = false;
+  const title = document.getElementById('chatTitle');
+  const sub = document.getElementById('chatSubtitle');
+  const av = document.getElementById('avatar');
+  const sendBtn = document.getElementById('btnSend');
+
+  if (title) title.innerText = selectedName;
+  if (sub) sub.innerText = waId;
+  if (av) av.innerText = initials(selectedName);
+  if (sendBtn) sendBtn.disabled = false;
 
   lastSig = '';
   await loadMessages();
   await loadConversations();
 }
 
+async function createConversation() {
+  const n = document.getElementById('newNumber');
+  const waIdRaw = (n?.value || '').trim();
+  if (!waIdRaw) return alert('Digite um número');
+
+  try {
+    const resp = await fetchJSON('/api/conversations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ waId: waIdRaw, name: '' })
+    });
+
+    if (n) n.value = '';
+    await loadConversations();
+    await selectConversation(resp.waId, resp.waId);
+  } catch (e) {
+    alert('Falha ao adicionar número: ' + (e.message || e));
+  }
+}
+
 async function sendMessage() {
   const input = document.getElementById('msg');
-  const text = input.value.trim();
+  const text = (input?.value || '').trim();
   if (!selected) return alert('Selecione uma conversa');
   if (!text) return;
 
-  input.value = '';
+  if (input) input.value = '';
 
   try {
     await fetchJSON('/api/send', {
@@ -191,20 +208,33 @@ async function sendMessage() {
   }
 }
 
-document.getElementById('btnSend').addEventListener('click', sendMessage);
+// ===== BINDINGS =====
+document.getElementById('btnNew')?.addEventListener('click', createConversation);
+document.getElementById('newNumber')?.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') createConversation();
+});
 
-document.getElementById('msg').addEventListener('keydown', (e) => {
+document.getElementById('btnSend')?.addEventListener('click', sendMessage);
+document.getElementById('msg')?.addEventListener('keydown', (e) => {
+  // Enter envia, Shift+Enter quebra linha (se você trocar input por textarea no futuro)
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();
   }
 });
 
-document.getElementById('search').addEventListener('input', (e) => {
+document.getElementById('btnRefresh')?.addEventListener('click', async () => {
+  lastSig = '';
+  await loadConversations();
+  if (selected) await loadMessages();
+});
+
+document.getElementById('search')?.addEventListener('input', (e) => {
   searchTerm = (e.target.value || '').toLowerCase();
   loadConversations();
 });
 
+// Start
 loadConversations().then(() => {
   timer = setInterval(async () => {
     try {
