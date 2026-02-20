@@ -1,194 +1,172 @@
-// UI_VERSION: 2026-02-19-FIX-405-ADD-NUMBER
-let selected = null;
-let selectedName = '';
-let searchTerm = '';
-let lastSig = '';
-let timer = null;
+// UI_VERSION: 2026-02-20-FIX-SYNTAX-POLLING
+
+var selected = null;         // waId
+var selectedName = '';
+var searchTerm = '';
+var lastSig = '';
+var timer = null;
+
+function qs(id) { return document.getElementById(id); }
 
 function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, (m) => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[m]));
+  s = String(s == null ? '' : s);
+  return s.replace(/[&<>"']/g, function (m) {
+    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m];
+  });
 }
 
 function initials(nameOrNumber) {
-  const s = String(nameOrNumber || '').trim();
+  var s = String(nameOrNumber || '').trim();
   if (!s) return '—';
-  const parts = s.split(/\s+/).filter(Boolean);
+  var parts = s.split(/\s+/).filter(Boolean);
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
 function fmtTime(ts) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  try {
+    var d = new Date(ts);
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  } catch (e) { return ''; }
 }
 
-function fmtDay(ts) {
-  return new Date(ts).toLocaleDateString('pt-BR', {
-    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric'
-  });
-}
-
-async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, {
-    ...opts,
-    credentials: 'same-origin'
-  });
-
-  let data = null;
-  try { data = await res.json(); } catch { data = null; }
-
+async function fetchJSON(url, opts) {
+  opts = opts || {};
+  var res = await fetch(url, Object.assign({}, opts, { credentials: 'same-origin' }));
+  var data = null;
+  try { data = await res.json(); } catch (e) {}
   if (!res.ok) {
-    const msg = data?.error || `Erro ${res.status}`;
-    throw new Error(msg);
+    var msg = (data && (data.error || data.message)) ? (data.error || data.message) : ('HTTP ' + res.status);
+    var err = new Error(msg);
+    err.data = data;
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
 
-function renderTicks(status) {
-  if (!status) return '';
-  if (status === 'sent') return '<span class="text-[11px] text-[#667781]">✓</span>';
-  if (status === 'delivered') return '<span class="text-[11px] text-[#667781]">✓✓</span>';
-  if (status === 'read') return '<span class="text-[11px] text-sky-600">✓✓</span>';
-  if (status === 'failed') return '<span class="text-[11px] text-red-600 font-bold">!</span>';
-  return '';
-}
+function renderConversations(list) {
+  var box = qs('list');
+  if (!box) return;
 
-function convoHTML(c) {
-  const lastText = c.last?.text || '—';
-  const time = c.lastMessageAt ? fmtTime(c.lastMessageAt) : '';
-  const isActive = selected === c.waId;
+  if (!Array.isArray(list)) list = [];
 
-  return `
-    <button data-id="${c.waId}"
-      class="w-full text-left px-3 py-3 border-b hover:bg-[#f5f6f6] ${isActive ? 'bg-[#f0f2f5]' : 'bg-white'}">
-      <div class="flex items-center gap-3">
-        <div class="h-12 w-12 rounded-full bg-slate-200 flex items-center justify-center font-semibold text-slate-600">
-          ${escapeHtml(initials(c.name || c.waId))}
-        </div>
-        <div class="min-w-0 flex-1">
-          <div class="flex items-center justify-between">
-            <div class="font-semibold text-[#111b21] truncate">${escapeHtml(c.name || c.waId)}</div>
-            <div class="text-xs text-[#667781]">${time}</div>
+  var html = '';
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i] || {};
+    var waId = c.waId || '';
+    var name = c.name || waId || '—';
+    var last = (c.last && c.last.text) ? c.last.text : '—';
+    var t = c.lastMessageAt ? fmtTime(c.lastMessageAt) : '';
+
+    // filtro
+    var hay = (name + ' ' + waId + ' ' + last).toLowerCase();
+    if (searchTerm && hay.indexOf(searchTerm) === -1) continue;
+
+    var active = (selected === waId) ? 'active' : '';
+    html += `
+      <div class="row ${active}" data-wa="${escapeHtml(waId)}" data-name="${escapeHtml(name)}">
+        <div class="avatar">${escapeHtml(initials(name))}</div>
+        <div class="meta">
+          <div class="top">
+            <div class="name">${escapeHtml(name)}</div>
+            <div class="time">${escapeHtml(t)}</div>
           </div>
-          <div class="text-sm text-[#667781] truncate">${escapeHtml(lastText)}</div>
-          <div class="text-[11px] text-[#94a3b8] truncate">${escapeHtml(c.waId)}</div>
+          <div class="last">${escapeHtml(last).slice(0, 60)}</div>
+          <div class="sub">${escapeHtml(waId)}</div>
         </div>
       </div>
-    </button>
-  `;
-}
-
-function sig(messages) {
-  return (messages || []).map(m => `${m.direction}|${m.at}|${m.status || ''}|${m.text}`).join('::');
-}
-
-function renderMessages(messages) {
-  const root = document.getElementById('messages');
-  if (!root) return;
-
-  root.innerHTML = '';
-  let lastDay = '';
-
-  for (const m of messages || []) {
-    const out = m.direction === 'out';
-    const bubble = out ? 'bg-[#d9fdd3]' : 'bg-white';
-    const align = out ? 'justify-end' : 'justify-start';
-    const time = fmtTime(m.at);
-
-    const day = new Date(m.at).toDateString();
-    if (day !== lastDay) {
-      lastDay = day;
-      root.insertAdjacentHTML('beforeend', `
-        <div class="flex justify-center my-4">
-          <div class="text-[11px] px-3 py-1 rounded-full bg-[#e1f0f7] text-[#667781] shadow-sm">
-            ${escapeHtml(fmtDay(m.at))}
-          </div>
-        </div>
-      `);
-    }
-
-    const ticks = out ? renderTicks(m.status) : '';
-
-    root.insertAdjacentHTML('beforeend', `
-      <div class="flex ${align} mb-2">
-        <div class="max-w-[72%] ${bubble} rounded-2xl px-4 py-2 shadow-sm">
-          <div class="whitespace-pre-wrap text-[#111b21] text-sm">${escapeHtml(m.text)}</div>
-          <div class="mt-1 flex items-center justify-end gap-2">
-            <span class="text-[11px] text-[#667781]">${time}</span>
-            ${ticks}
-          </div>
-        </div>
-      </div>
-    `);
+    `;
   }
 
-  const wrap = document.getElementById('messagesWrap');
-  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  box.innerHTML = html || `<div class="empty">Sem conversas</div>`;
+
+  // click
+  var rows = box.querySelectorAll('.row');
+  for (var r = 0; r < rows.length; r++) {
+    rows[r].addEventListener('click', function () {
+      var wa = this.getAttribute('data-wa');
+      var nm = this.getAttribute('data-name');
+      selectConversation(wa, nm);
+    });
+  }
 }
 
 async function loadConversations() {
-  let list = [];
-  try {
-    const data = await fetchJSON('/api/conversations');
-    list = Array.isArray(data) ? data : [];
-  } catch (e) {
-    // se falhar, não quebra a UI
-    list = [];
+  var list = await fetchJSON('/api/conversations');
+  renderConversations(list);
+
+  // assinatura simples pra detectar mudanças
+  var sig = '';
+  if (Array.isArray(list)) {
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i] || {};
+      sig += (c.waId || '') + '|' + (c.lastMessageAt || '') + ';';
+    }
   }
-
-  const filtered = list.filter(c => {
-    if (!searchTerm) return true;
-    const hay = `${c.name || ''} ${c.waId || ''} ${(c.last?.text || '')}`.toLowerCase();
-    return hay.includes(searchTerm);
-  });
-
-  const root = document.getElementById('convoList');
-  if (!root) return;
-
-  root.innerHTML = filtered.map(convoHTML).join('');
-
-  root.querySelectorAll('button[data-id]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      const convo = filtered.find(x => x.waId === id);
-      await selectConversation(id, convo?.name || id);
-    });
-  });
+  lastSig = sig;
 }
 
 async function loadMessages() {
   if (!selected) return;
-  const msgs = await fetchJSON(`/api/messages/${selected}`);
-  const s = sig(msgs);
-  if (s === lastSig) return;
-  lastSig = s;
-  renderMessages(msgs);
+  var msgs = await fetchJSON('/api/messages/' + encodeURIComponent(selected));
+  if (!Array.isArray(msgs)) msgs = [];
+
+  var area = qs('msgs');
+  if (!area) return;
+
+  var html = '';
+  for (var i = 0; i < msgs.length; i++) {
+    var m = msgs[i] || {};
+    var dir = m.direction === 'out' ? 'out' : 'in';
+    var t = m.at ? fmtTime(m.at) : '';
+    var text = m.text || '';
+
+    html += `
+      <div class="bubble ${dir}">
+        <div class="text">${escapeHtml(text)}</div>
+        <div class="meta">${escapeHtml(t)}${dir === 'out' ? tick(m.status) : ''}</div>
+      </div>
+    `;
+  }
+
+  area.innerHTML = html || `<div class="empty">Sem mensagens</div>`;
+  area.scrollTop = area.scrollHeight;
+}
+
+function tick(status) {
+  // sent / delivered / read / failed
+  if (status === 'read') return ' ✓✓';
+  if (status === 'delivered') return ' ✓✓';
+  if (status === 'failed') return ' !';
+  return ' ✓';
 }
 
 async function selectConversation(waId, name) {
   selected = waId;
   selectedName = name || waId;
 
-  document.getElementById('chatTitle')?.innerText = selectedName;
-  document.getElementById('chatSubtitle')?.innerText = waId;
-  document.getElementById('avatar')?.innerText = initials(selectedName);
-  const btnSend = document.getElementById('btnSend');
-  if (btnSend) btnSend.disabled = false;
+  var title = qs('chatTitle');
+  var sub = qs('chatSub');
+  var av = qs('chatAvatar');
+  var sendBtn = qs('btnSend');
 
-  lastSig = '';
+  if (title) title.innerText = selectedName;
+  if (sub) sub.innerText = waId;
+  if (av) av.innerText = initials(selectedName);
+  if (sendBtn) sendBtn.disabled = false;
+
   await loadMessages();
   await loadConversations();
 }
 
 async function createConversation() {
-  const n = document.getElementById('newNumber');
-  const waIdRaw = (n?.value || '').trim();
-  if (!waIdRaw) return alert('Digite um número');
+  var n = qs('newNumber');
+  var waIdRaw = (n && n.value ? n.value : '').trim();
+  if (!waIdRaw) { alert('Digite um número'); return; }
 
   try {
-    const resp = await fetchJSON('/api/conversations', {
+    var resp = await fetchJSON('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ waId: waIdRaw, name: '' })
@@ -203,59 +181,76 @@ async function createConversation() {
 }
 
 async function sendMessage() {
-  const input = document.getElementById('msg');
-  const text = (input?.value || '').trim();
   if (!selected) return alert('Selecione uma conversa');
+  var input = qs('msg');
+  var text = (input && input.value ? input.value : '').trim();
   if (!text) return;
-
-  if (input) input.value = '';
 
   try {
     await fetchJSON('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ waId: selected, text })
+      body: JSON.stringify({ waId: selected, text: text })
     });
 
-    lastSig = '';
+    if (input) input.value = '';
     await loadMessages();
     await loadConversations();
   } catch (e) {
-    alert('Falha ao enviar: ' + (e.message || e));
+    // mostra erro detalhado
+    var details = (e && e.data && e.data.details) ? JSON.stringify(e.data.details) : '';
+    alert('Erro ao enviar: ' + (e.message || e) + (details ? '\n\n' + details : ''));
   }
 }
 
-// ===== BINDINGS =====
-document.getElementById('btnNew')?.addEventListener('click', createConversation);
-document.getElementById('newNumber')?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') createConversation();
-});
-
-document.getElementById('btnSend')?.addEventListener('click', sendMessage);
-document.getElementById('msg')?.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-document.getElementById('btnRefresh')?.addEventListener('click', async () => {
-  lastSig = '';
-  await loadConversations();
-  if (selected) await loadMessages();
-});
-
-document.getElementById('search')?.addEventListener('input', (e) => {
-  searchTerm = (e.target.value || '').toLowerCase();
-  loadConversations();
-});
-
-// Start
-loadConversations().then(() => {
-  timer = setInterval(async () => {
+function startPolling() {
+  if (timer) clearInterval(timer);
+  timer = setInterval(async function () {
     try {
       await loadConversations();
       if (selected) await loadMessages();
-    } catch {}
-  }, 2000);
-});
+    } catch (e) {}
+  }, 3500);
+}
+
+function bindUI() {
+  var btnNew = qs('btnNew');
+  var btnSend = qs('btnSend');
+  var btnRefresh = qs('btnRefresh');
+  var search = qs('search');
+  var newNumber = qs('newNumber');
+  var msg = qs('msg');
+
+  if (btnNew) btnNew.addEventListener('click', createConversation);
+  if (btnSend) btnSend.addEventListener('click', sendMessage);
+  if (btnRefresh) btnRefresh.addEventListener('click', async function () {
+    await loadConversations();
+    if (selected) await loadMessages();
+  });
+
+  if (search) search.addEventListener('input', function (e) {
+    searchTerm = (e.target.value || '').toLowerCase().trim();
+    loadConversations();
+  });
+
+  if (newNumber) newNumber.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') createConversation();
+  });
+
+  if (msg) msg.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+}
+
+(async function boot() {
+  try {
+    bindUI();
+    await loadConversations();
+    startPolling();
+  } catch (e) {
+    alert('Falha ao iniciar UI: ' + (e.message || e));
+  }
+})();
