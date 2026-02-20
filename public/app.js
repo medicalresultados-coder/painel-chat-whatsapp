@@ -1,4 +1,4 @@
-// UI_VERSION: 2026-02-19-ADD-NUMBER
+// UI_VERSION: 2026-02-19-FIX-405-ADD-NUMBER
 let selected = null;
 let selectedName = '';
 let searchTerm = '';
@@ -6,8 +6,8 @@ let lastSig = '';
 let timer = null;
 
 function escapeHtml(s) {
-  return String(s || '').replace(/[&<>"']/g, m => ({
-    '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+  return String(s || '').replace(/[&<>"']/g, (m) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[m]));
 }
 
@@ -15,7 +15,7 @@ function initials(nameOrNumber) {
   const s = String(nameOrNumber || '').trim();
   if (!s) return '—';
   const parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0,2).toUpperCase();
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
@@ -25,14 +25,24 @@ function fmtTime(ts) {
 }
 
 function fmtDay(ts) {
-  return new Date(ts).toLocaleDateString('pt-BR', { weekday:'short', day:'2-digit', month:'2-digit', year:'numeric' });
+  return new Date(ts).toLocaleDateString('pt-BR', {
+    weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric'
+  });
 }
 
 async function fetchJSON(url, opts = {}) {
-  const res = await fetch(url, { ...opts, credentials: 'same-origin' });
+  const res = await fetch(url, {
+    ...opts,
+    credentials: 'same-origin'
+  });
+
   let data = null;
-  try { data = await res.json(); } catch {}
-  if (!res.ok) throw new Error(data?.error || `Erro ${res.status}`);
+  try { data = await res.json(); } catch { data = null; }
+
+  if (!res.ok) {
+    const msg = data?.error || `Erro ${res.status}`;
+    throw new Error(msg);
+  }
   return data;
 }
 
@@ -71,16 +81,17 @@ function convoHTML(c) {
 }
 
 function sig(messages) {
-  return (messages || []).map(m => `${m.direction}|${m.at}|${m.status||''}|${m.text}`).join('::');
+  return (messages || []).map(m => `${m.direction}|${m.at}|${m.status || ''}|${m.text}`).join('::');
 }
 
 function renderMessages(messages) {
   const root = document.getElementById('messages');
-  root.innerHTML = '';
+  if (!root) return;
 
+  root.innerHTML = '';
   let lastDay = '';
 
-  for (const m of messages) {
+  for (const m of messages || []) {
     const out = m.direction === 'out';
     const bubble = out ? 'bg-[#d9fdd3]' : 'bg-white';
     const align = out ? 'justify-end' : 'justify-start';
@@ -114,21 +125,28 @@ function renderMessages(messages) {
   }
 
   const wrap = document.getElementById('messagesWrap');
-  wrap.scrollTop = wrap.scrollHeight;
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
 }
 
 async function loadConversations() {
-  const list = await fetchJSON('/api/conversations');
-  const arr = Array.isArray(list) ? list : [];
-  const filtered = arr.filter(c => { /* ... */ });
-  ...
-}
+  let list = [];
+  try {
+    const data = await fetchJSON('/api/conversations');
+    list = Array.isArray(data) ? data : [];
+  } catch (e) {
+    // se falhar, não quebra a UI
+    list = [];
+  }
+
+  const filtered = list.filter(c => {
     if (!searchTerm) return true;
-    const hay = `${c.name||''} ${c.waId||''} ${(c.last?.text||'')}`.toLowerCase();
+    const hay = `${c.name || ''} ${c.waId || ''} ${(c.last?.text || '')}`.toLowerCase();
     return hay.includes(searchTerm);
   });
 
   const root = document.getElementById('convoList');
+  if (!root) return;
+
   root.innerHTML = filtered.map(convoHTML).join('');
 
   root.querySelectorAll('button[data-id]').forEach(btn => {
@@ -153,15 +171,11 @@ async function selectConversation(waId, name) {
   selected = waId;
   selectedName = name || waId;
 
-  const title = document.getElementById('chatTitle');
-  const sub = document.getElementById('chatSubtitle');
-  const av = document.getElementById('avatar');
-  const sendBtn = document.getElementById('btnSend');
-
-  if (title) title.innerText = selectedName;
-  if (sub) sub.innerText = waId;
-  if (av) av.innerText = initials(selectedName);
-  if (sendBtn) sendBtn.disabled = false;
+  document.getElementById('chatTitle')?.innerText = selectedName;
+  document.getElementById('chatSubtitle')?.innerText = waId;
+  document.getElementById('avatar')?.innerText = initials(selectedName);
+  const btnSend = document.getElementById('btnSend');
+  if (btnSend) btnSend.disabled = false;
 
   lastSig = '';
   await loadMessages();
@@ -219,7 +233,6 @@ document.getElementById('newNumber')?.addEventListener('keydown', (e) => {
 
 document.getElementById('btnSend')?.addEventListener('click', sendMessage);
 document.getElementById('msg')?.addEventListener('keydown', (e) => {
-  // Enter envia, Shift+Enter quebra linha (se você trocar input por textarea no futuro)
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     sendMessage();

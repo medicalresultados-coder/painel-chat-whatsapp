@@ -26,7 +26,6 @@ async function dbQuery(text, params) {
 }
 
 async function initDB() {
-  // Tabelas base
   await dbQuery(`
     CREATE TABLE IF NOT EXISTS conversations (
       wa_id TEXT PRIMARY KEY,
@@ -46,7 +45,7 @@ async function initDB() {
     );
   `);
 
-  // Upgrade para ticks reais (não quebra se já existir)
+  // Upgrade para ticks reais
   await dbQuery(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS wamid TEXT;`);
   await dbQuery(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'sent';`);
 
@@ -58,13 +57,13 @@ async function initDB() {
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Responde preflight (OPTIONS) para evitar 405
+// ✅ Responde preflight (OPTIONS) para evitar 405
 app.options('*', (req, res) => res.sendStatus(200));
 
-// Basic Auth (libera /webhook)
+// ✅ Basic Auth: libera /webhook e /api (para o painel funcionar)
 app.use((req, res, next) => {
- if (req.path.startsWith('/webhook')) return next();
-if (req.path.startsWith('/api')) return next(); // ✅ libera API para o painel funcionar
+  if (req.path.startsWith('/webhook')) return next();
+  if (req.path.startsWith('/api')) return next(); // painel usa fetch para /api
 
   const auth = req.headers.authorization || '';
   const [type, token] = auth.split(' ');
@@ -80,7 +79,7 @@ if (req.path.startsWith('/api')) return next(); // ✅ libera API para o painel 
   return res.status(401).send('Invalid credentials');
 });
 
-// ✅ Desativar cache do HTML/JS/CSS (resolve “não atualiza index.html”)
+// ✅ Anti-cache para HTML/JS/CSS
 app.use((req, res, next) => {
   if (
     req.path === '/' ||
@@ -95,14 +94,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Força o HTML sempre atualizado (sem cache) para a rota "/"
+// ✅ Força a rota "/" a entregar o index.html sempre atualizado
 app.get('/', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.setHeader('Pragma', 'no-cache');
   res.setHeader('Expires', '0');
   return res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
 
 // Static
 app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
@@ -151,7 +149,6 @@ async function insertMessage({ waId, direction, text, status = 'sent', wamid = n
 }
 
 function normalizeStatus(st) {
-  // WhatsApp: sent | delivered | read | failed
   if (st === 'delivered') return 'delivered';
   if (st === 'read') return 'read';
   if (st === 'failed') return 'failed';
@@ -191,20 +188,15 @@ app.get('/api/conversations', async (req, res) => {
 
 app.get('/api/messages/:waId', async (req, res) => {
   try {
-    const waId = req.params.waId;
     const { rows } = await dbQuery(
       `
-      SELECT direction,
-             text,
-             status,
-             wamid,
-             EXTRACT(EPOCH FROM at)*1000 AS at
+      SELECT direction, text, status, wamid, EXTRACT(EPOCH FROM at)*1000 AS at
       FROM messages
       WHERE wa_id = $1
       ORDER BY at ASC
       LIMIT 800
       `,
-      [waId]
+      [req.params.waId]
     );
     res.json(rows);
   } catch (e) {
@@ -245,14 +237,7 @@ app.post('/api/send', async (req, res) => {
 
     const wamid = r.data?.messages?.[0]?.id || null;
 
-    await insertMessage({
-      waId: phone,
-      direction: 'out',
-      text,
-      status: 'sent',
-      wamid
-    });
-
+    await insertMessage({ waId: phone, direction: 'out', text, status: 'sent', wamid });
     res.json({ ok: true, wamid });
   } catch (err) {
     res.status(500).json({
@@ -290,31 +275,16 @@ app.post('/webhook', async (req, res) => {
       else if (msg.type === 'interactive') text = '[interativo]';
 
       await upsertConversation(from, name);
-      await insertMessage({
-        waId: from,
-        direction: 'in',
-        text,
-        status: 'read'
-      });
+      await insertMessage({ waId: from, direction: 'in', text, status: 'read' });
     }
 
-    // 2) Status das mensagens enviadas (ticks reais)
+    // 2) Status (ticks reais)
     const st = value?.statuses?.[0];
-    if (st) {
-      const wamid = st.id;
-      const newStatus = normalizeStatus(st.status);
-
-      // Só atualiza se existir wamid (mensagem OUT)
-      if (wamid) {
-        await dbQuery(
-          `
-          UPDATE messages
-          SET status = $1
-          WHERE wamid = $2
-          `,
-          [newStatus, wamid]
-        );
-      }
+    if (st?.id) {
+      await dbQuery(
+        `UPDATE messages SET status = $1 WHERE wamid = $2`,
+        [normalizeStatus(st.status), st.id]
+      );
     }
   } catch (e) {
     console.error('Webhook error:', e?.message || e);
