@@ -1,318 +1,196 @@
-// UI_VERSION: 2026-02-20-FIX-INBOUND-RENDER-BY-WAID
+// UI_VERSION: 2026-02-20-FIX-ID-MATCH
 
-var selected = null;         // waId normalizado
-var selectedName = '';
-var searchTerm = '';
-var timer = null;
+let selected = null;
+let selectedName = '';
+let timer = null;
 
-// assinatura para evitar reload desnecessário
-var lastConvSig = '';
-var lastMsgSig = '';
+function qs(id){ return document.getElementById(id); }
 
-function qs(id) { return document.getElementById(id); }
-
-function escapeHtml(s) {
-  s = String(s == null ? '' : s);
-  return s.replace(/[&<>"']/g, function (m) {
-    return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m];
-  });
+function escapeHtml(s){
+  return String(s||'').replace(/[&<>"']/g,m=>(
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+  ));
 }
 
-function digitsOnly(v) {
-  return String(v || '').replace(/\D/g, '');
+function digitsOnly(v){ return String(v||'').replace(/\D/g,''); }
+
+function normalizePhone(v){
+  v = String(v||'').split('@')[0];
+  const d = digitsOnly(v);
+  if(!d) return '';
+  return d.startsWith('55') ? d : '55'+d;
 }
 
-// normaliza sempre para 55DDDNÚMERO
-function normalizePhoneBR(input) {
-  var raw = String(input || '').trim();
-  if (!raw) return '';
-  // remove sufixo tipo @c.us / @s.whatsapp.net
-  raw = raw.split('@')[0];
-  var d = digitsOnly(raw);
-  if (!d) return '';
-  if (d.startsWith('55')) return d;
-  return '55' + d;
+function initials(n){
+  n = String(n||'').trim();
+  if(!n) return '—';
+  const p = n.split(/\s+/);
+  if(p.length===1) return p[0].slice(0,2).toUpperCase();
+  return (p[0][0]+p[1][0]).toUpperCase();
 }
 
-function initials(nameOrNumber) {
-  var s = String(nameOrNumber || '').trim();
-  if (!s) return '—';
-  var parts = s.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
+function fmtTime(ts){
+  return new Date(ts).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
 }
 
-function fmtTime(ts) {
-  try {
-    var d = new Date(ts);
-    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-  } catch (e) { return ''; }
-}
+/* =============================
+   CONVERSAS
+============================= */
 
-async function fetchJSON(url, opts) {
-  opts = opts || {};
-  var res = await fetch(url, Object.assign({}, opts, { credentials: 'same-origin' }));
-  var data = null;
-  try { data = await res.json(); } catch (e) {}
-  if (!res.ok) {
-    var msg = (data && (data.error || data.message)) ? (data.error || data.message) : ('HTTP ' + res.status);
-    var err = new Error(msg);
-    err.data = data;
-    err.status = res.status;
-    throw err;
-  }
-  return data;
-}
+async function loadConversations(){
+  const list = await fetch('/api/conversations',{credentials:'same-origin'}).then(r=>r.json());
 
-function convSignature(list) {
-  if (!Array.isArray(list)) return '';
-  var sig = '';
-  for (var i = 0; i < list.length; i++) {
-    var c = list[i] || {};
-    sig += (c.waId || '') + '|' + (c.lastMessageAt || '') + ';';
-  }
-  return sig;
-}
+  const box = qs('convoList');
+  box.innerHTML='';
 
-function msgSignature(msgs) {
-  if (!Array.isArray(msgs)) return '';
-  // usa último item pra detectar mudança sem custo alto
-  var last = msgs.length ? (msgs[msgs.length - 1] || {}) : {};
-  return String(msgs.length) + '|' + (last.at || '') + '|' + (last.text || '') + '|' + (last.direction || '') + '|' + (last.status || '');
-}
+  list.forEach(c=>{
+    const wa = normalizePhone(c.waId);
+    const name = c.name || wa;
+    const last = c.last?.text || '';
+    const time = c.lastMessageAt ? fmtTime(c.lastMessageAt):'';
 
-function renderConversations(list) {
-  var box = qs('list');
-  if (!box) return;
-  if (!Array.isArray(list)) list = [];
-
-  // se selected existir, tenta “fixar” no waId canônico vindo do backend
-  if (selected) {
-    for (var k = 0; k < list.length; k++) {
-      var w = normalizePhoneBR(list[k]?.waId);
-      if (w && w === selected) {
-        // ok
-        break;
-      }
-    }
-  }
-
-  var html = '';
-  for (var i = 0; i < list.length; i++) {
-    var c = list[i] || {};
-    var waId = normalizePhoneBR(c.waId || '');
-    if (!waId) continue;
-
-    var name = c.name || waId || '—';
-    var last = (c.last && c.last.text) ? c.last.text : '—';
-    var t = c.lastMessageAt ? fmtTime(c.lastMessageAt) : '';
-
-    // filtro
-    var hay = (name + ' ' + waId + ' ' + last).toLowerCase();
-    if (searchTerm && hay.indexOf(searchTerm) === -1) continue;
-
-    var active = (selected === waId) ? 'active' : '';
-    html += `
-      <div class="row ${active}" data-wa="${escapeHtml(waId)}" data-name="${escapeHtml(name)}">
-        <div class="avatar">${escapeHtml(initials(name))}</div>
-        <div class="meta">
-          <div class="top">
-            <div class="name">${escapeHtml(name)}</div>
-            <div class="time">${escapeHtml(t)}</div>
+    const row = document.createElement('div');
+    row.className='px-4 py-3 border-b cursor-pointer hover:bg-[#f5f6f6]';
+    row.innerHTML=`
+      <div class="flex items-center gap-3">
+        <div class="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center font-semibold">
+          ${escapeHtml(initials(name))}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex justify-between">
+            <div class="font-semibold truncate">${escapeHtml(name)}</div>
+            <div class="text-xs text-slate-500">${escapeHtml(time)}</div>
           </div>
-          <div class="last">${escapeHtml(last).slice(0, 60)}</div>
-          <div class="sub">${escapeHtml(waId)}</div>
+          <div class="text-sm text-slate-500 truncate">${escapeHtml(last)}</div>
         </div>
       </div>
     `;
-  }
 
-  box.innerHTML = html || `<div class="empty">Sem conversas</div>`;
-
-  // click
-  var rows = box.querySelectorAll('.row');
-  for (var r = 0; r < rows.length; r++) {
-    rows[r].addEventListener('click', function () {
-      var wa = normalizePhoneBR(this.getAttribute('data-wa'));
-      var nm = this.getAttribute('data-name');
-      selectConversation(wa, nm);
-    });
-  }
+    row.onclick=()=>selectConversation(wa,name);
+    box.appendChild(row);
+  });
 }
 
-async function loadConversations() {
-  var list = await fetchJSON('/api/conversations');
-  var sig = convSignature(list);
+/* =============================
+   MENSAGENS
+============================= */
 
-  // só re-renderiza se mudou
-  if (sig !== lastConvSig) {
-    lastConvSig = sig;
-    renderConversations(list);
-  } else {
-    // mesmo sem mudar, atualiza marcação active (caso selecionou agora)
-    renderConversations(list);
-  }
-}
+async function loadMessages(force){
+  if(!selected) return;
 
-function tick(status) {
-  if (status === 'read') return ' ✓✓';
-  if (status === 'delivered') return ' ✓✓';
-  if (status === 'failed') return ' !';
-  return ' ✓';
-}
+  const msgs = await fetch(`/api/messages/${selected}`,{credentials:'same-origin'}).then(r=>r.json());
 
-function renderMessages(msgs) {
-  var area = qs('msgs');
-  if (!area) return;
-  if (!Array.isArray(msgs)) msgs = [];
+  const wrap = qs('messages');
+  wrap.innerHTML='';
 
-  var html = '';
-  for (var i = 0; i < msgs.length; i++) {
-    var m = msgs[i] || {};
-    var dir = (m.direction === 'out') ? 'out' : 'in';
-    var t = m.at ? fmtTime(m.at) : '';
-    var text = m.text || '';
+  msgs.forEach(m=>{
+    const isOut = m.direction==='out';
+    const div = document.createElement('div');
+    div.className=`flex mb-2 ${isOut?'justify-end':'justify-start'}`;
 
-    html += `
-      <div class="bubble ${dir}">
-        <div class="text">${escapeHtml(text)}</div>
-        <div class="meta">${escapeHtml(t)}${dir === 'out' ? tick(m.status) : ''}</div>
+    div.innerHTML=`
+      <div class="max-w-[70%] px-4 py-2 rounded-lg text-sm
+        ${isOut?'bg-emerald-200':'bg-white'}">
+        ${escapeHtml(m.text)}
+        <div class="text-[10px] text-slate-500 mt-1 text-right">
+          ${fmtTime(m.at)} ${isOut?(m.status==='read'?'✓✓':'✓'):''}
+        </div>
       </div>
     `;
-  }
 
-  area.innerHTML = html || `<div class="empty">Sem mensagens</div>`;
-  area.scrollTop = area.scrollHeight;
+    wrap.appendChild(div);
+  });
+
+  wrap.scrollTop=wrap.scrollHeight;
 }
 
-async function loadMessages(force) {
-  if (!selected) return;
+/* =============================
+   SELECIONAR
+============================= */
 
-  var url = '/api/messages/' + encodeURIComponent(selected);
-  var msgs = await fetchJSON(url);
-  if (!Array.isArray(msgs)) msgs = [];
+async function selectConversation(wa,name){
+  selected=normalizePhone(wa);
+  selectedName=name;
 
-  var sig = msgSignature(msgs);
-  if (force || sig !== lastMsgSig) {
-    lastMsgSig = sig;
-    renderMessages(msgs);
-  }
+  qs('chatTitle').innerText=name;
+  qs('chatSubtitle').innerText=selected;
+  qs('avatar').innerText=initials(name);
+  qs('btnSend').disabled=false;
+
+  await loadMessages(true);
 }
 
-async function selectConversation(waId, name) {
-  var wa = normalizePhoneBR(waId);
-  if (!wa) return;
+/* =============================
+   ENVIAR
+============================= */
 
-  selected = wa;
-  selectedName = name || wa;
+async function sendMessage(){
+  if(!selected) return;
 
-  var title = qs('chatTitle');
-  var sub = qs('chatSub');
-  var av = qs('chatAvatar');
-  var sendBtn = qs('btnSend');
+  const input = qs('msg');
+  const text = input.value.trim();
+  if(!text) return;
 
-  if (title) title.innerText = selectedName;
-  if (sub) sub.innerText = selected;
-  if (av) av.innerText = initials(selectedName);
-  if (sendBtn) sendBtn.disabled = false;
+  await fetch('/api/send',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({waId:selected,text})
+  });
 
+  input.value='';
   await loadMessages(true);
   await loadConversations();
 }
 
-async function createConversation() {
-  var n = qs('newNumber');
-  var waIdRaw = (n && n.value ? n.value : '').trim();
-  var wa = normalizePhoneBR(waIdRaw);
+/* =============================
+   NOVA CONVERSA
+============================= */
 
-  if (!wa) { alert('Digite um número válido (com DDD).'); return; }
+async function createConversation(){
+  const n = normalizePhone(qs('newNumber').value);
+  if(!n) return alert('Número inválido');
 
-  try {
-    var resp = await fetchJSON('/api/conversations', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ waId: wa, name: '' })
-    });
-
-    if (n) n.value = '';
-    await loadConversations();
-    await selectConversation(resp.waId || wa, resp.waId || wa);
-  } catch (e) {
-    alert('Falha ao adicionar número: ' + (e.message || e));
-  }
-}
-
-async function sendMessage() {
-  if (!selected) return alert('Selecione uma conversa');
-  var input = qs('msg');
-  var text = (input && input.value ? input.value : '').trim();
-  if (!text) return;
-
-  try {
-    await fetchJSON('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ waId: selected, text: text })
-    });
-
-    if (input) input.value = '';
-    await loadMessages(true);
-    await loadConversations();
-  } catch (e) {
-    var details = (e && e.data && e.data.details) ? JSON.stringify(e.data.details) : '';
-    alert('Erro ao enviar: ' + (e.message || e) + (details ? '\n\n' + details : ''));
-  }
-}
-
-function startPolling() {
-  if (timer) clearInterval(timer);
-  timer = setInterval(async function () {
-    try {
-      await loadConversations();
-      if (selected) await loadMessages(false);
-    } catch (e) {}
-  }, 2500);
-}
-
-function bindUI() {
-  var btnNew = qs('btnNew');
-  var btnSend = qs('btnSend');
-  var btnRefresh = qs('btnRefresh');
-  var search = qs('search');
-  var newNumber = qs('newNumber');
-  var msg = qs('msg');
-
-  if (btnNew) btnNew.addEventListener('click', createConversation);
-  if (btnSend) btnSend.addEventListener('click', sendMessage);
-  if (btnRefresh) btnRefresh.addEventListener('click', async function () {
-    await loadConversations();
-    if (selected) await loadMessages(true);
+  await fetch('/api/conversations',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    credentials:'same-origin',
+    body:JSON.stringify({waId:n})
   });
 
-  if (search) search.addEventListener('input', function (e) {
-    searchTerm = (e.target.value || '').toLowerCase().trim();
-    // não chama loadConversations async repetindo, só re-render com o que já tem
-    loadConversations();
-  });
+  qs('newNumber').value='';
+  await loadConversations();
+  await selectConversation(n,n);
+}
 
-  if (newNumber) newNumber.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter') createConversation();
-  });
+/* =============================
+   POLLING
+============================= */
 
-  if (msg) msg.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
+function startPolling(){
+  if(timer) clearInterval(timer);
+  timer=setInterval(async()=>{
+    await loadConversations();
+    if(selected) await loadMessages(false);
+  },3000);
+}
+
+/* =============================
+   BOOT
+============================= */
+
+document.addEventListener('DOMContentLoaded',async()=>{
+  qs('btnSend').onclick=sendMessage;
+  qs('btnNew').onclick=createConversation;
+  qs('btnRefresh').onclick=loadConversations;
+
+  qs('msg').addEventListener('keydown',e=>{
+    if(e.key==='Enter' && !e.shiftKey){
       e.preventDefault();
       sendMessage();
     }
   });
-}
 
-(async function boot() {
-  try {
-    bindUI();
-    await loadConversations();
-    startPolling();
-  } catch (e) {
-    alert('Falha ao iniciar UI: ' + (e.message || e));
-  }
-})();
+  await loadConversations();
+  startPolling();
+});
