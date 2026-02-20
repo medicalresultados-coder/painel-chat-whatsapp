@@ -82,6 +82,7 @@ async function upsertConversation(waId, name = '') {
 }
 
 async function insertMessage({ waId, direction, text, status = 'sent', wamid = null, atMs = null }) {
+  // não sobrescreve o nome (passa vazio)
   await upsertConversation(waId, '');
   if (atMs) {
     await dbQuery(
@@ -123,40 +124,61 @@ app.get('/webhook', (req, res) => {
   return res.sendStatus(403);
 });
 
+// ✅ Corrigido: percorre TODOS entry/changes e salva TODAS messages/statuses
 app.post('/webhook', async (req, res) => {
+  // responde rápido; processamento continua
+  res.sendStatus(200);
+
   try {
-    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    for (const entry of entries) {
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      for (const change of changes) {
+        const value = change?.value;
+        if (!value) continue;
 
-    // mensagens recebidas
-    const msg = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
+        // 1) Mensagens recebidas
+        const contact = value?.contacts?.[0];
+        const nameFromContact = contact?.profile?.name || '';
 
-    if (msg) {
-      const from = msg.from;
-      const name = contact?.profile?.name || from;
+        const messages = Array.isArray(value?.messages) ? value.messages : [];
+        for (const msg of messages) {
+          const from = msg?.from;
+          if (!from) continue;
 
-      let text = '[não-texto]';
-      if (msg.type === 'text') text = msg.text?.body || '';
-      else if (msg.type === 'button') text = msg.button?.text || '[botão]';
-      else if (msg.type === 'interactive') text = '[interativo]';
+          let text = '[não-texto]';
+          if (msg.type === 'text') text = msg.text?.body || '';
+          else if (msg.type === 'button') text = msg.button?.text || '[botão]';
+          else if (msg.type === 'interactive') text = '[interativo]';
 
-      await upsertConversation(from, name);
-      await insertMessage({ waId: from, direction: 'in', text, status: 'read' });
-    }
+          const wamid = msg.id || null;
 
-    // status dos envios (ticks)
-    const st = value?.statuses?.[0];
-    if (st?.id) {
-      await dbQuery(
-        `UPDATE messages SET status = $1 WHERE wamid = $2`,
-        [normalizeStatus(st.status), st.id]
-      );
+          await upsertConversation(from, nameFromContact || from);
+          await insertMessage({
+            waId: from,
+            direction: 'in',
+            text,
+            status: 'read',      // pode deixar read para aparecer “lido” no painel
+            wamid
+          });
+        }
+
+        // 2) Status das mensagens enviadas (ticks reais)
+        const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
+        for (const st of statuses) {
+          const wamid = st?.id;
+          if (!wamid) continue;
+
+          await dbQuery(
+            `UPDATE messages SET status = $1 WHERE wamid = $2`,
+            [normalizeStatus(st.status), wamid]
+          );
+        }
+      }
     }
   } catch (e) {
     console.error('Webhook error:', e?.message || e);
   }
-
-  res.sendStatus(200);
 });
 
 /**
