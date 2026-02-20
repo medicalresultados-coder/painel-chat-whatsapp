@@ -53,57 +53,9 @@ async function initDB() {
   await dbQuery(`CREATE INDEX IF NOT EXISTS idx_messages_wamid ON messages(wamid);`);
 }
 
-// ===== Middleware =====
+// ===== Middleware base (precisa vir antes do webhook POST) =====
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
-
-// ✅ Responde preflight (OPTIONS) para evitar 405
-app.options('*', (req, res) => res.sendStatus(200));
-
-// ✅ Basic Auth: libera /webhook e /api (para o painel funcionar)
-app.use((req, res, next) => {
-  if (req.path.startsWith('/webhook')) return next();
-  if (req.path.startsWith('/api')) return next(); // painel usa fetch para /api
-
-  const auth = req.headers.authorization || '';
-  const [type, token] = auth.split(' ');
-  if (type !== 'Basic' || !token) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="Painel WhatsApp"');
-    return res.status(401).send('Auth required');
-  }
-
-  const [user, pass] = Buffer.from(token, 'base64').toString().split(':');
-  if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
-
-  res.setHeader('WWW-Authenticate', 'Basic realm="Painel WhatsApp"');
-  return res.status(401).send('Invalid credentials');
-});
-
-// ✅ Anti-cache para HTML/JS/CSS
-app.use((req, res, next) => {
-  if (
-    req.path === '/' ||
-    req.path.endsWith('.html') ||
-    req.path.endsWith('.js') ||
-    req.path.endsWith('.css')
-  ) {
-    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.setHeader('Pragma', 'no-cache');
-    res.setHeader('Expires', '0');
-  }
-  next();
-});
-
-// ✅ Força a rota "/" a entregar o index.html sempre atualizado
-app.get('/', (req, res) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// Static
-app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 // ===== Helpers =====
 function normalizePhoneBR(input) {
@@ -154,6 +106,108 @@ function normalizeStatus(st) {
   if (st === 'failed') return 'failed';
   return 'sent';
 }
+
+/**
+ * ===========================
+ * ✅ WEBHOOK (MUITO IMPORTANTE)
+ * Colocar ANTES do static e antes de qualquer coisa que possa interceptar.
+ * ===========================
+ */
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
+  return res.sendStatus(403);
+});
+
+app.post('/webhook', async (req, res) => {
+  try {
+    // útil pra debugar no Railway (confirma que chegou)
+    console.log('WEBHOOK HIT', new Date().toISOString());
+
+    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
+
+    // 1) Mensagens recebidas
+    const msg = value?.messages?.[0];
+    const contact = value?.contacts?.[0];
+
+    if (msg) {
+      const from = msg.from;
+      const name = contact?.profile?.name || from;
+
+      let text = '[não-texto]';
+      if (msg.type === 'text') text = msg.text?.body || '';
+      else if (msg.type === 'button') text = msg.button?.text || '[botão]';
+      else if (msg.type === 'interactive') text = '[interativo]';
+
+      await upsertConversation(from, name);
+      await insertMessage({ waId: from, direction: 'in', text, status: 'read' });
+    }
+
+    // 2) Status (ticks reais)
+    const st = value?.statuses?.[0];
+    if (st?.id) {
+      await dbQuery(
+        `UPDATE messages SET status = $1 WHERE wamid = $2`,
+        [normalizeStatus(st.status), st.id]
+      );
+    }
+  } catch (e) {
+    console.error('Webhook error:', e?.message || e);
+  }
+
+  res.sendStatus(200);
+});
+
+// ✅ Responde preflight (OPTIONS) para evitar 405 em requests do browser
+app.options('*', (req, res) => res.sendStatus(200));
+
+// ✅ Basic Auth: libera /webhook e /api (para o painel funcionar)
+app.use((req, res, next) => {
+  if (req.path.startsWith('/webhook')) return next();
+  if (req.path.startsWith('/api')) return next();
+
+  const auth = req.headers.authorization || '';
+  const [type, token] = auth.split(' ');
+  if (type !== 'Basic' || !token) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="Painel WhatsApp"');
+    return res.status(401).send('Auth required');
+  }
+
+  const [user, pass] = Buffer.from(token, 'base64').toString().split(':');
+  if (user === ADMIN_USER && pass === ADMIN_PASS) return next();
+
+  res.setHeader('WWW-Authenticate', 'Basic realm="Painel WhatsApp"');
+  return res.status(401).send('Invalid credentials');
+});
+
+// ✅ Anti-cache para HTML/JS/CSS
+app.use((req, res, next) => {
+  if (
+    req.path === '/' ||
+    req.path.endsWith('.html') ||
+    req.path.endsWith('.js') ||
+    req.path.endsWith('.css')
+  ) {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+  }
+  next();
+});
+
+// ✅ Força a rota "/" a entregar o index.html sempre atualizado
+app.get('/', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  return res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Static (agora depois do webhook)
+app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 // ===== API =====
 app.get('/api/conversations', async (req, res) => {
@@ -245,52 +299,6 @@ app.post('/api/send', async (req, res) => {
       details: err.response?.data || err.message
     });
   }
-});
-
-// ===== Webhook =====
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-  return res.sendStatus(403);
-});
-
-app.post('/webhook', async (req, res) => {
-  try {
-    const value = req.body?.entry?.[0]?.changes?.[0]?.value;
-
-    // 1) Mensagens recebidas
-    const msg = value?.messages?.[0];
-    const contact = value?.contacts?.[0];
-
-    if (msg) {
-      const from = msg.from;
-      const name = contact?.profile?.name || from;
-
-      let text = '[não-texto]';
-      if (msg.type === 'text') text = msg.text?.body || '';
-      else if (msg.type === 'button') text = msg.button?.text || '[botão]';
-      else if (msg.type === 'interactive') text = '[interativo]';
-
-      await upsertConversation(from, name);
-      await insertMessage({ waId: from, direction: 'in', text, status: 'read' });
-    }
-
-    // 2) Status (ticks reais)
-    const st = value?.statuses?.[0];
-    if (st?.id) {
-      await dbQuery(
-        `UPDATE messages SET status = $1 WHERE wamid = $2`,
-        [normalizeStatus(st.status), st.id]
-      );
-    }
-  } catch (e) {
-    console.error('Webhook error:', e?.message || e);
-  }
-
-  res.sendStatus(200);
 });
 
 // ===== START =====
