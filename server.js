@@ -152,10 +152,12 @@ app.post('/webhook', async (req, res) => {
         // 📩 MENSAGENS RECEBIDAS
         const messages = Array.isArray(value?.messages) ? value.messages : [];
         if (messages.length) {
-          const name = value.contacts?.[0]?.profile?.name || '';
+          const contactName = value.contacts?.[0]?.profile?.name || '';
 
           for (const msg of messages) {
-            const from = msg?.from;
+            // ✅ AQUI ESTÁ A CORREÇÃO PRINCIPAL:
+            // normaliza o "from" pra bater com o padrão usado no OUT e no painel
+            const from = normalizePhoneBR(msg?.from);
             if (!from) continue;
 
             let text = '[não-texto]';
@@ -165,7 +167,9 @@ app.post('/webhook', async (req, res) => {
 
             console.log('Recebida:', from, text);
 
-            await upsertConversation(from, name || from);
+            // guarda nome (se existir) e atualiza conversa
+            await upsertConversation(from, contactName || from);
+
             await insertMessage({
               waId: from,
               direction: 'in',
@@ -279,8 +283,9 @@ app.get('/api/conversations', async (req, res) => {
 
 app.get('/api/messages/:waId', async (req, res) => {
   try {
-    // ✅ normaliza (se o front enviar com caracteres)
-    const waId = String(req.params.waId || '').trim();
+    // ✅ normaliza também aqui (caso venha sem 55 ou com caracteres)
+    const waId = normalizePhoneBR(String(req.params.waId || '').trim());
+
     const { rows } = await dbQuery(
       `
       SELECT direction, text, status, wamid, EXTRACT(EPOCH FROM at)*1000 AS at
