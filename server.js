@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 
-// ✅ desliga ETag global (evita 304 em rotas API)
+// evita 304/etag atrapalhando UI/API
 app.set('etag', false);
 
 const PORT = process.env.PORT || 3000;
@@ -48,11 +48,13 @@ async function initDB() {
     );
   `);
 
-  // upgrade (ticks)
   await dbQuery(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS wamid TEXT;`);
   await dbQuery(`ALTER TABLE messages ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'sent';`);
+
   await dbQuery(`CREATE INDEX IF NOT EXISTS idx_messages_wa_id_at ON messages(wa_id, at DESC);`);
   await dbQuery(`CREATE INDEX IF NOT EXISTS idx_messages_wamid ON messages(wamid);`);
+
+  console.log('DB OK');
 }
 
 // ===== Middleware base =====
@@ -62,7 +64,7 @@ app.use(express.urlencoded({ extended: true }));
 // evita 405 em preflight
 app.options('*', (req, res) => res.sendStatus(200));
 
-// ✅ anti-cache e sem ETag para TODA API (resolve 304 e "não atualiza no chat")
+// anti-cache e sem ETag para API
 app.use('/api', (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Pragma', 'no-cache');
@@ -71,11 +73,37 @@ app.use('/api', (req, res, next) => {
 });
 
 // ===== Helpers =====
+function digitsOnly(v) {
+  return String(v || '').replace(/\D/g, '');
+}
+
 function normalizePhoneBR(input) {
-  const digits = String(input || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.startsWith('55')) return digits;
-  return '55' + digits;
+  // remove sufixos tipo @c.us / @s.whatsapp.net etc
+  const raw = String(input || '');
+  const noAt = raw.split('@')[0];
+  const d = digitsOnly(noAt);
+  if (!d) return '';
+  if (d.startsWith('55')) return d;
+  return '55' + d;
+}
+
+// Gera variações para achar histórico salvo “errado”
+function waIdVariants(input) {
+  const raw = String(input || '');
+  const noAt = raw.split('@')[0];
+  const d = digitsOnly(noAt);
+  const norm = normalizePhoneBR(d);
+
+  const set = new Set();
+  if (raw) set.add(raw);
+  if (noAt) set.add(noAt);
+  if (d) set.add(d);
+  if (norm) set.add(norm);
+
+  // versão sem 55 (caso tenha sido salvo sem o DDI)
+  if (norm && norm.startsWith('55')) set.add(norm.slice(2));
+
+  return Array.from(set).filter(Boolean);
 }
 
 async function upsertConversation(waId, name = '') {
@@ -93,7 +121,6 @@ async function upsertConversation(waId, name = '') {
 }
 
 async function insertMessage({ waId, direction, text, status = 'sent', wamid = null, atMs = null }) {
-  // não sobrescreve o nome (passa vazio)
   await upsertConversation(waId, '');
   if (atMs) {
     await dbQuery(
@@ -127,7 +154,6 @@ function normalizeStatus(st) {
  * ===========================
  */
 
-// ✅ verificação do Meta (URL de callback + verify token)
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -137,39 +163,31 @@ app.get('/webhook', (req, res) => {
   return res.sendStatus(403);
 });
 
-// ✅ recebe eventos e salva no banco
 app.post('/webhook', async (req, res) => {
   try {
     const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
 
     for (const entry of entries) {
       const changes = Array.isArray(entry?.changes) ? entry.changes : [];
-
       for (const change of changes) {
         const value = change?.value;
         if (!value) continue;
 
-        // 📩 MENSAGENS RECEBIDAS
+        // 📩 Mensagens recebidas
         const messages = Array.isArray(value?.messages) ? value.messages : [];
-        if (messages.length) {
-          const contactName = value.contacts?.[0]?.profile?.name || '';
+        const contactName = value?.contacts?.[0]?.profile?.name || '';
 
-          for (const msg of messages) {
-            // ✅ AQUI ESTÁ A CORREÇÃO PRINCIPAL:
-            // normaliza o "from" pra bater com o padrão usado no OUT e no painel
-            const from = normalizePhoneBR(msg?.from);
-            if (!from) continue;
+        for (const msg of messages) {
+          const from = normalizePhoneBR(msg?.from);
+          if (!from) continue;
 
-            let text = '[não-texto]';
-            if (msg.type === 'text') text = msg.text?.body || '';
-            else if (msg.type === 'button') text = msg.button?.text || '[botão]';
-            else if (msg.type === 'interactive') text = '[interativo]';
+          let text = '[não-texto]';
+          if (msg.type === 'text') text = msg.text?.body || '';
+          else if (msg.type === 'button') text = msg.button?.text || '[botão]';
+          else if (msg.type === 'interactive') text = '[interativo]';
 
-            console.log('Recebida:', from, text);
-
-            // guarda nome (se existir) e atualiza conversa
+          try {
             await upsertConversation(from, contactName || from);
-
             await insertMessage({
               waId: from,
               direction: 'in',
@@ -177,24 +195,31 @@ app.post('/webhook', async (req, res) => {
               status: 'read',
               wamid: msg.id || null
             });
+            console.log('IN SAVED:', from, text);
+          } catch (e) {
+            console.error('IN SAVE ERROR:', e?.message || e);
           }
         }
 
-        // ✔ STATUS (TICKS)
+        // ✔ Status (ticks)
         const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
         for (const st of statuses) {
-          if (!st?.id) continue;
-          await dbQuery(
-            `UPDATE messages SET status = $1 WHERE wamid = $2`,
-            [normalizeStatus(st.status), st.id]
-          );
+          const wamid = st?.id;
+          if (!wamid) continue;
+          const newStatus = normalizeStatus(st.status);
+
+          try {
+            await dbQuery(`UPDATE messages SET status = $1 WHERE wamid = $2`, [newStatus, wamid]);
+          } catch (e) {
+            console.error('STATUS UPDATE ERROR:', e?.message || e);
+          }
         }
       }
     }
 
     return res.sendStatus(200);
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('Webhook error:', err?.message || err);
     return res.sendStatus(200);
   }
 });
@@ -202,7 +227,7 @@ app.post('/webhook', async (req, res) => {
 /**
  * ===========================
  * ✅ Basic Auth só para a UI
- * /api e /webhook ficam liberados
+ * /api e /webhook liberados
  * ===========================
  */
 app.use((req, res, next) => {
@@ -223,14 +248,9 @@ app.use((req, res, next) => {
   return res.status(401).send('Invalid credentials');
 });
 
-// anti-cache para UI
+// anti-cache UI
 app.use((req, res, next) => {
-  if (
-    req.path === '/' ||
-    req.path.endsWith('.html') ||
-    req.path.endsWith('.js') ||
-    req.path.endsWith('.css')
-  ) {
+  if (req.path === '/' || req.path.endsWith('.html') || req.path.endsWith('.js') || req.path.endsWith('.css')) {
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.setHeader('Pragma', 'no-cache');
     res.setHeader('Expires', '0');
@@ -238,12 +258,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// rota principal do chat
-app.get('/', (req, res) => {
-  return res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
-// arquivos estáticos do chat (sem cache)
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 /**
@@ -283,18 +298,17 @@ app.get('/api/conversations', async (req, res) => {
 
 app.get('/api/messages/:waId', async (req, res) => {
   try {
-    // ✅ normaliza também aqui (caso venha sem 55 ou com caracteres)
-    const waId = normalizePhoneBR(String(req.params.waId || '').trim());
+    const variants = waIdVariants(req.params.waId);
 
     const { rows } = await dbQuery(
       `
       SELECT direction, text, status, wamid, EXTRACT(EPOCH FROM at)*1000 AS at
       FROM messages
-      WHERE wa_id = $1
+      WHERE wa_id = ANY($1::text[])
       ORDER BY at ASC
       LIMIT 800
       `,
-      [waId]
+      [variants]
     );
 
     res.json(rows);
@@ -316,8 +330,8 @@ app.post('/api/conversations', async (req, res) => {
 });
 
 app.post('/api/send', async (req, res) => {
-  const { waId, text } = req.body;
-  const phone = normalizePhoneBR(waId);
+  const phone = normalizePhoneBR(req.body.waId);
+  const text = String(req.body.text || '');
 
   if (!phone || !text) return res.status(400).json({ error: 'waId e text obrigatórios' });
   if (!TOKEN || !PHONE_ID) return res.status(500).json({ error: 'Token/Phone ID não configurados' });
@@ -325,17 +339,14 @@ app.post('/api/send', async (req, res) => {
   try {
     const r = await axios.post(
       `https://graph.facebook.com/v18.0/${PHONE_ID}/messages`,
-      {
-        messaging_product: 'whatsapp',
-        to: phone,
-        type: 'text',
-        text: { body: text }
-      },
+      { messaging_product: 'whatsapp', to: phone, type: 'text', text: { body: text } },
       { headers: { Authorization: `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } }
     );
 
     const wamid = r.data?.messages?.[0]?.id || null;
+
     await insertMessage({ waId: phone, direction: 'out', text, status: 'sent', wamid });
+    console.log('OUT SAVED:', phone, text);
 
     res.json({ ok: true, wamid });
   } catch (err) {
@@ -344,10 +355,9 @@ app.post('/api/send', async (req, res) => {
 });
 
 // ===== START =====
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
 
-initDB()
-  .then(() => console.log('DB OK'))
-  .catch((e) => console.error('DB INIT ERROR:', e?.message || e));
+initDB().catch((e) => console.error('DB INIT ERROR:', e?.message || e));
+
+process.on('unhandledRejection', (e) => console.error('UNHANDLED REJECTION:', e));
+process.on('uncaughtException', (e) => console.error('UNCAUGHT EXCEPTION:', e));
