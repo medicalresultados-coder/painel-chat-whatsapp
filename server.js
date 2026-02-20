@@ -6,6 +6,9 @@ const { Pool } = require('pg');
 
 const app = express();
 
+// ✅ desliga ETag global (evita 304 em rotas API)
+app.set('etag', false);
+
 const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_ID = process.env.PHONE_NUMBER_ID;
@@ -58,6 +61,14 @@ app.use(express.urlencoded({ extended: true }));
 
 // evita 405 em preflight
 app.options('*', (req, res) => res.sendStatus(200));
+
+// ✅ anti-cache e sem ETag para TODA API (resolve 304 e "não atualiza no chat")
+app.use('/api', (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 
 // ===== Helpers =====
 function normalizePhoneBR(input) {
@@ -112,68 +123,75 @@ function normalizeStatus(st) {
 
 /**
  * ===========================
- * ✅ WEBHOOK (antes de static)
+ * ✅ WEBHOOK (GET + POST)
  * ===========================
  */
+
+// ✅ verificação do Meta (URL de callback + verify token)
+app.get('/webhook', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
+  return res.sendStatus(403);
+});
+
+// ✅ recebe eventos e salva no banco
 app.post('/webhook', async (req, res) => {
   try {
-    const entries = req.body.entry || [];
+    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
 
     for (const entry of entries) {
-      const changes = entry.changes || [];
+      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
 
       for (const change of changes) {
-        const value = change.value;
+        const value = change?.value;
+        if (!value) continue;
 
-        // =====================
         // 📩 MENSAGENS RECEBIDAS
-        // =====================
-        if (value.messages) {
-          for (const msg of value.messages) {
-            const from = msg.from;
-            const name = value.contacts?.[0]?.profile?.name || from;
+        const messages = Array.isArray(value?.messages) ? value.messages : [];
+        if (messages.length) {
+          const name = value.contacts?.[0]?.profile?.name || '';
+
+          for (const msg of messages) {
+            const from = msg?.from;
+            if (!from) continue;
 
             let text = '[não-texto]';
             if (msg.type === 'text') text = msg.text?.body || '';
-            if (msg.type === 'button') text = msg.button?.text || '[botão]';
-            if (msg.type === 'interactive') text = '[interativo]';
+            else if (msg.type === 'button') text = msg.button?.text || '[botão]';
+            else if (msg.type === 'interactive') text = '[interativo]';
 
             console.log('Recebida:', from, text);
 
-            await upsertConversation(from, name);
-
+            await upsertConversation(from, name || from);
             await insertMessage({
               waId: from,
               direction: 'in',
               text,
               status: 'read',
-              wamid: msg.id
+              wamid: msg.id || null
             });
           }
         }
 
-        // =====================
         // ✔ STATUS (TICKS)
-        // =====================
-        if (value.statuses) {
-          for (const status of value.statuses) {
-            if (status.id) {
-              await dbQuery(
-                `UPDATE messages SET status = $1 WHERE wamid = $2`,
-                [normalizeStatus(status.status), status.id]
-              );
-            }
-          }
+        const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
+        for (const st of statuses) {
+          if (!st?.id) continue;
+          await dbQuery(
+            `UPDATE messages SET status = $1 WHERE wamid = $2`,
+            [normalizeStatus(st.status), st.id]
+          );
         }
       }
     }
 
-    // RESPONDE SÓ DEPOIS DE PROCESSAR
-    res.sendStatus(200);
-
+    return res.sendStatus(200);
   } catch (err) {
     console.error('Webhook error:', err);
-    res.sendStatus(200);
+    return res.sendStatus(200);
   }
 });
 
@@ -216,12 +234,12 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ rota principal do chat
+// rota principal do chat
 app.get('/', (req, res) => {
   return res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// ✅ arquivos estáticos do chat
+// arquivos estáticos do chat (sem cache)
 app.use(express.static(path.join(__dirname, 'public'), { etag: false, maxAge: 0 }));
 
 /**
@@ -261,6 +279,8 @@ app.get('/api/conversations', async (req, res) => {
 
 app.get('/api/messages/:waId', async (req, res) => {
   try {
+    // ✅ normaliza (se o front enviar com caracteres)
+    const waId = String(req.params.waId || '').trim();
     const { rows } = await dbQuery(
       `
       SELECT direction, text, status, wamid, EXTRACT(EPOCH FROM at)*1000 AS at
@@ -269,8 +289,9 @@ app.get('/api/messages/:waId', async (req, res) => {
       ORDER BY at ASC
       LIMIT 800
       `,
-      [req.params.waId]
+      [waId]
     );
+
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: 'Falha ao listar mensagens', details: e.message });
