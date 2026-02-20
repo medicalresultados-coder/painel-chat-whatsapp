@@ -115,69 +115,65 @@ function normalizeStatus(st) {
  * ✅ WEBHOOK (antes de static)
  * ===========================
  */
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === VERIFY_TOKEN) return res.status(200).send(challenge);
-  return res.sendStatus(403);
-});
-
-// ✅ Corrigido: percorre TODOS entry/changes e salva TODAS messages/statuses
 app.post('/webhook', async (req, res) => {
-  // responde rápido; processamento continua
-  res.sendStatus(200);
-
   try {
-    const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+    const entries = req.body.entry || [];
+
     for (const entry of entries) {
-      const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+      const changes = entry.changes || [];
+
       for (const change of changes) {
-        const value = change?.value;
-        if (!value) continue;
+        const value = change.value;
 
-        // 1) Mensagens recebidas
-        const contact = value?.contacts?.[0];
-        const nameFromContact = contact?.profile?.name || '';
+        // =====================
+        // 📩 MENSAGENS RECEBIDAS
+        // =====================
+        if (value.messages) {
+          for (const msg of value.messages) {
+            const from = msg.from;
+            const name = value.contacts?.[0]?.profile?.name || from;
 
-        const messages = Array.isArray(value?.messages) ? value.messages : [];
-        for (const msg of messages) {
-          const from = msg?.from;
-          if (!from) continue;
+            let text = '[não-texto]';
+            if (msg.type === 'text') text = msg.text?.body || '';
+            if (msg.type === 'button') text = msg.button?.text || '[botão]';
+            if (msg.type === 'interactive') text = '[interativo]';
 
-          let text = '[não-texto]';
-          if (msg.type === 'text') text = msg.text?.body || '';
-          else if (msg.type === 'button') text = msg.button?.text || '[botão]';
-          else if (msg.type === 'interactive') text = '[interativo]';
+            console.log('Recebida:', from, text);
 
-          const wamid = msg.id || null;
+            await upsertConversation(from, name);
 
-          await upsertConversation(from, nameFromContact || from);
-          await insertMessage({
-            waId: from,
-            direction: 'in',
-            text,
-            status: 'read',      // pode deixar read para aparecer “lido” no painel
-            wamid
-          });
+            await insertMessage({
+              waId: from,
+              direction: 'in',
+              text,
+              status: 'read',
+              wamid: msg.id
+            });
+          }
         }
 
-        // 2) Status das mensagens enviadas (ticks reais)
-        const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
-        for (const st of statuses) {
-          const wamid = st?.id;
-          if (!wamid) continue;
-
-          await dbQuery(
-            `UPDATE messages SET status = $1 WHERE wamid = $2`,
-            [normalizeStatus(st.status), wamid]
-          );
+        // =====================
+        // ✔ STATUS (TICKS)
+        // =====================
+        if (value.statuses) {
+          for (const status of value.statuses) {
+            if (status.id) {
+              await dbQuery(
+                `UPDATE messages SET status = $1 WHERE wamid = $2`,
+                [normalizeStatus(status.status), status.id]
+              );
+            }
+          }
         }
       }
     }
-  } catch (e) {
-    console.error('Webhook error:', e?.message || e);
+
+    // RESPONDE SÓ DEPOIS DE PROCESSAR
+    res.sendStatus(200);
+
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.sendStatus(200);
   }
 });
 
